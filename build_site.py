@@ -57,7 +57,6 @@ FAMILIES = [
     ("sql-analytics", "SQL / Analytics"),
     ("tool-use", "Tool Use"),
 ]
-FAMILY_TITLE = dict(FAMILIES)
 
 # One honest line per family (what the loop actually does).
 FAMILY_DESC = {
@@ -82,6 +81,31 @@ FAMILY_DESC = {
     "sql-analytics": "Text-to-SQL and analytics loops verified by running the query and asserting on the result, not by eyeballing.",
     "tool-use": "Call tools in a loop, verifying each call's real effect and recovering from errors instead of retrying blindly.",
 }
+
+
+def _discover_families():
+    """Append any loops/<key>.md not already curated above — title taken from its H1.
+    Lets a new family be added by just dropping a file; no code edit, so an automated
+    round can't break the build by hand-editing FAMILIES."""
+    known = {k for k, _ in FAMILIES}
+    for path in sorted(LOOPS.glob("*.md")):
+        key = path.stem
+        if key in known or key == "README" or key.startswith("00"):
+            continue
+        head = path.read_text(encoding="utf-8")[:400]
+        m = re.search(r"^#\s+(.+)$", head, re.M)
+        FAMILIES.append((key, m.group(1).strip() if m else key.replace("-", " ").title()))
+        known.add(key)
+
+
+_discover_families()
+FAMILY_TITLE = dict(FAMILIES)
+
+
+def family_desc(key: str, title: str) -> str:
+    return FAMILY_DESC.get(key, f"Agent-loop prompts for {title.lower()} — frozen goal, "
+                                "independent verifier, multi-armed stop.")
+
 
 # ----------------------------------------------------------------------------
 # Parsing
@@ -866,6 +890,7 @@ def page(title: str, body: str, prefix: str, *, desc: str = "", extra_head: str 
     <nav>
       <a href="{prefix}library.html">Library</a>
       <a href="{prefix}patterns.html">Patterns</a>
+      <a href="{prefix}graph.html">Graph</a>
       <a href="{prefix}loops.html">Loops</a>
       <a href="{prefix}automation.html">Automation</a>
       <a href="{prefix}families.html">Families</a>
@@ -1345,6 +1370,66 @@ def render_loops(prompts: list[dict]) -> str:
                      "prompt-improvement, debugging) and see their SUCCESS/BUDGET/NO-PROGRESS/BLOCKED exits.")
 
 
+# ---- Constellation graph ----------------------------------------------------
+
+def build_graph_data(prompts: list[dict], related: dict) -> dict:
+    """Nodes = prompts; edges = real relationships (curation near-dups + shared patterns).
+    Positions are computed deterministically in JS from the family index (no physics sim)."""
+    idx = {p["id"]: i for i, p in enumerate(prompts)}
+    fam_keys = [k for k, _ in FAMILIES]
+    fam_i = {k: i for i, k in enumerate(fam_keys)}
+    nodes = [{
+        "t": p["display_title"], "f": fam_i[p["family_key"]],
+        "fk": p["family_key"], "id": p["id"],
+        "p": [k for k, _n, _r, _b in PATTERN_META if k in detect_patterns(p)],
+    } for p in prompts]
+    seen = set()
+    edges = []
+    for p in prompts:
+        for q, _sh, cur in related.get(p["id"], []):
+            a, b = idx[p["id"]], idx[q["id"]]
+            key = (min(a, b), max(a, b))
+            if key in seen:
+                continue
+            seen.add(key)
+            edges.append({"s": key[0], "t": key[1], "c": 1 if cur else 0})
+    return {"nodes": nodes, "edges": edges,
+            "families": [{"key": k, "title": t} for k, t in FAMILIES]}
+
+
+def render_graph(prompts: list[dict], related: dict) -> str:
+    data = build_graph_data(prompts, related)
+    fam_opts = "".join(f'<option value="{k}">{html.escape(t)}</option>' for k, t in FAMILIES)
+    # no-JS fallback: a plain family→prompt list so content exists without the graph
+    fallback = ""
+    for k, t in FAMILIES:
+        items = "".join(f'<li><a href="prompt/{p["id"]}.html">{html.escape(p["display_title"])}</a></li>'
+                        for p in prompts if p["family_key"] == k)
+        fallback += f"<details><summary>{html.escape(t)}</summary><ul>{items}</ul></details>"
+    body = f"""
+<section class="wrap graph-page">
+  <h1 class="section-h">Prompt constellation</h1>
+  <p class="section-sub">Every prompt is a node, clustered by family. Lines are <em>real</em> relationships —
+  ★ near-duplicates from the library's own curation notes, plus shared patterns. Hover a node to light up its
+  relatives; click to open it. Not decoration: no edge exists that isn't in the data.</p>
+  <div class="graph-controls">
+    <select id="g-family" class="filter"><option value="">All families</option>{fam_opts}</select>
+    <button class="lv-btn" id="g-reset">Reset</button>
+    <span class="graph-hint muted">Tip: hover = highlight relatives · click = open</span>
+  </div>
+  <div class="graph-stage">
+    <div class="graph-wrap" id="graphWrap" role="img" aria-label="Constellation of {len(data['nodes'])} prompts clustered by family"></div>
+    <aside class="graph-panel" id="graphPanel" hidden></aside>
+  </div>
+  <details class="graph-fallback"><summary>Browse as a list instead</summary>{fallback}</details>
+</section>
+<script>window.GRAPH = {json.dumps(data, ensure_ascii=False)};</script>
+"""
+    return page("Constellation · prompt-os", body, "",
+                desc="An interactive constellation of every prompt, clustered by family, with real "
+                     "relationship edges from shared patterns and curation near-duplicates.")
+
+
 # ---- Automation section -----------------------------------------------------
 
 def _step_counts(a: dict) -> tuple[int, int, int]:
@@ -1670,7 +1755,7 @@ def render_families_index(prompts: list[dict]) -> str:
         f'<a class="fam-lg" href="family/{k}.html">'
         f'<span class="fam-lg-head"><span class="fam-name">{html.escape(t)}</span>'
         f'<span class="fam-count">{sum(1 for p in prompts if p["family_key"]==k)} prompts</span></span>'
-        f'<span class="fam-desc">{html.escape(FAMILY_DESC[k])}</span></a>'
+        f'<span class="fam-desc">{html.escape(family_desc(k, t))}</span></a>'
         for k, t in FAMILIES
     )
     body = f"""
@@ -2038,6 +2123,36 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .flow-arrow{text-align:center;color:var(--muted);font-size:1rem;line-height:1;padding:3px 0;width:130px}
 .rel-list,.fail-list{max-width:80ch;color:var(--ink-soft)}
 .rel-list li,.fail-list li{margin:7px 0}
+
+/* constellation graph */
+.graph-page{padding-top:28px}
+.graph-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+.graph-hint{font-size:.82rem}
+.graph-stage{position:relative;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);overflow:hidden;box-shadow:var(--shadow)}
+.graph-wrap{width:100%}
+.graph-svg{width:100%;height:auto;display:block;max-height:74vh}
+.g-edge{stroke:var(--line-strong);stroke-width:.6;opacity:.3;transition:opacity .15s,stroke .15s}
+.g-edge-cur{stroke:var(--warm);opacity:.45}
+.g-edge.hot{stroke:var(--accent);opacity:.9;stroke-width:1.3}
+.g-edge.dim{opacity:.05}
+.g-edge.off{display:none}
+.g-node{cursor:pointer;stroke:var(--panel);stroke-width:1.2;transition:opacity .15s}
+.g-node:hover,.g-node.hot{stroke:var(--ink)}
+.g-node.dim{opacity:.2}
+.g-node.off{opacity:.05;pointer-events:none}
+.g-node:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.graph-panel{position:absolute;top:12px;right:12px;width:min(300px,82%);background:var(--panel);
+  border:1px solid var(--line-strong);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.graph-panel .g-close{position:absolute;top:6px;right:10px;background:none;border:none;font-size:1.4rem;line-height:1;cursor:pointer;color:var(--muted)}
+.g-fam{font-family:var(--mono);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+.graph-panel h3{margin:5px 0 10px;font-size:1.05rem;line-height:1.25}
+.g-pats{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px}
+.g-open{padding:9px 16px;font-size:.9rem}
+.graph-fallback{margin-top:18px;color:var(--ink-soft)}
+.graph-fallback>summary{cursor:pointer;font-weight:600;font-size:.9rem}
+.graph-fallback details{margin:6px 0 6px 4px}
+.graph-fallback summary{cursor:pointer}
+@media (max-width:640px){.graph-svg{max-height:64vh}.graph-panel{position:static;width:auto;margin-top:10px;box-shadow:none}}
 
 /* ---- warmth pass: soft cards + warm hover accents ---- */
 .pcard,.fam-card,.fam-lg,.auto-card,.pat-card,.rel-card,.gterm,.principle{box-shadow:var(--shadow)}
@@ -2493,6 +2608,79 @@ if (results) {
     runBtn.addEventListener('click', run);
   })();
 })();
+
+/* ===================== CONSTELLATION GRAPH ===================== */
+(function () {
+  'use strict';
+  var wrap = document.getElementById('graphWrap');
+  if (!wrap || !window.GRAPH) return;
+  var G = window.GRAPH, N = G.nodes, E = G.edges, F = G.families.length;
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var W = 1000, H = 720, cx = 500, cy = 360, R = 260;
+  var within = {};
+  N.forEach(function (n) {
+    var a = -Math.PI / 2 + n.f * 2 * Math.PI / F;
+    var fx = cx + R * Math.cos(a), fy = cy + R * Math.sin(a);
+    var k = (within[n.f] = (within[n.f] || 0)); within[n.f]++;
+    var rr = 10 * Math.sqrt(k + 1), aa = (k + 1) * 2.399963;
+    n.x = fx + rr * Math.cos(aa); n.y = fy + rr * Math.sin(aa);
+    n.hue = Math.round(n.f / F * 360);
+  });
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var svg = document.createElementNS(SVGNS, 'svg');
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('class', 'graph-svg');
+  var gE = document.createElementNS(SVGNS, 'g');
+  var edgeEls = E.map(function (e) {
+    var l = document.createElementNS(SVGNS, 'line');
+    l.setAttribute('x1', N[e.s].x.toFixed(1)); l.setAttribute('y1', N[e.s].y.toFixed(1));
+    l.setAttribute('x2', N[e.t].x.toFixed(1)); l.setAttribute('y2', N[e.t].y.toFixed(1));
+    l.setAttribute('class', e.c ? 'g-edge g-edge-cur' : 'g-edge'); gE.appendChild(l); return l;
+  });
+  svg.appendChild(gE);
+  var adj = N.map(function () { return []; });
+  E.forEach(function (e) { adj[e.s].push(e.t); adj[e.t].push(e.s); });
+  var gN = document.createElementNS(SVGNS, 'g');
+  var nodeEls = N.map(function (n, i) {
+    var c = document.createElementNS(SVGNS, 'circle');
+    c.setAttribute('cx', n.x.toFixed(1)); c.setAttribute('cy', n.y.toFixed(1)); c.setAttribute('r', 5);
+    c.setAttribute('fill', 'hsl(' + n.hue + ',58%,52%)'); c.setAttribute('class', 'g-node');
+    c.setAttribute('tabindex', '0'); c.setAttribute('role', 'button');
+    c.setAttribute('aria-label', n.t + ' — ' + (G.families[n.f] ? G.families[n.f].title : ''));
+    gN.appendChild(c); return c;
+  });
+  svg.appendChild(gN); wrap.appendChild(svg);
+  var panel = document.getElementById('graphPanel');
+  function hi(i) {
+    var near = {}; near[i] = 1; adj[i].forEach(function (j) { near[j] = 1; });
+    nodeEls.forEach(function (el, j) { el.classList.toggle('dim', !near[j]); el.classList.toggle('hot', j === i); });
+    edgeEls.forEach(function (el, j) { var on = E[j].s === i || E[j].t === i; el.classList.toggle('hot', on); el.classList.toggle('dim', !on); });
+  }
+  function clr() { nodeEls.forEach(function (el) { el.classList.remove('dim', 'hot'); }); edgeEls.forEach(function (el) { el.classList.remove('dim', 'hot'); }); }
+  function open(i) {
+    var n = N[i]; panel.hidden = false;
+    panel.innerHTML = '<button class="g-close" aria-label="Close">×</button>' +
+      '<span class="g-fam" style="color:hsl(' + n.hue + ',58%,44%)">' + esc(G.families[n.f].title) + '</span>' +
+      '<h3>' + esc(n.t) + '</h3>' +
+      (n.p.length ? '<div class="g-pats">' + n.p.map(function (p) { return '<span class="chip">' + esc(p) + '</span>'; }).join('') + '</div>' : '') +
+      '<a class="btn btn-primary g-open" href="prompt/' + n.id + '.html">Open prompt →</a>';
+    panel.querySelector('.g-close').addEventListener('click', function () { panel.hidden = true; });
+  }
+  nodeEls.forEach(function (el, i) {
+    el.addEventListener('mouseenter', function () { hi(i); });
+    el.addEventListener('mouseleave', clr);
+    el.addEventListener('focus', function () { hi(i); });
+    el.addEventListener('click', function () { hi(i); open(i); });
+    el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hi(i); open(i); } });
+  });
+  var fsel = document.getElementById('g-family');
+  if (fsel) fsel.addEventListener('change', function () {
+    var k = fsel.value;
+    nodeEls.forEach(function (el, j) { el.classList.toggle('off', !!k && N[j].fk !== k); });
+    edgeEls.forEach(function (el, j) { el.classList.toggle('off', !!k && N[E[j].s].fk !== k && N[E[j].t].fk !== k); });
+  });
+  var rb = document.getElementById('g-reset');
+  if (rb) rb.addEventListener('click', function () { clr(); if (panel) panel.hidden = true; if (fsel) { fsel.value = ''; fsel.dispatchEvent(new Event('change')); } });
+})();
 """
 
 
@@ -2530,7 +2718,7 @@ def build():
 
     # analysis (deterministic)
     stats = corpus_stats(prompts)
-    stats["generated_pages"] = 8 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
+    stats["generated_pages"] = 9 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
     related = build_related(prompts)
     # optional authored pattern reference docs (produced by the pattern workflow); seed
     # blurbs are used when absent, so the site is complete with or without them.
@@ -2569,6 +2757,7 @@ def build():
     (SITE / "families.html").write_text(render_families_index(prompts), encoding="utf-8")
     (SITE / "glossary.html").write_text(render_glossary(), encoding="utf-8")
     (SITE / "patterns.html").write_text(render_patterns_index(stats, pat_docs), encoding="utf-8")
+    (SITE / "graph.html").write_text(render_graph(prompts, related), encoding="utf-8")
     (SITE / "loops.html").write_text(render_loops(prompts), encoding="utf-8")
     (SITE / "automation.html").write_text(render_automation_index(), encoding="utf-8")
     for a in AUTOMATIONS:
@@ -2583,7 +2772,7 @@ def build():
         (SITE / "pattern" / f"{key}.html").write_text(
             render_pattern_page(key, name, role, blurb, prompts, pat_docs.get(key, {})), encoding="utf-8")
 
-    total_pages = 8 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops
+    total_pages = 9 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
     print(f"  parsed {n} prompts across {len(FAMILIES)} families ({starters} in starter set)")
     print(f"  wrote {total_pages} HTML pages + prompts.json + style.css + app.js -> {SITE.relative_to(ROOT)}/")
     print(f"  open: {SITE / 'index.html'}")
