@@ -1,6 +1,6 @@
 # Agent Memory
 
-`agent-memory` — 2 loop prompts.
+`agent-memory` — 3 loop prompts.
 
 ### 1. Agent-Loop Prompt — Memory: Consolidate & Dedupe
 
@@ -83,4 +83,47 @@ Stop the instant one of these trips:
 - BLOCKED — an entry can't be cleanly matched or excluded because of missing metadata or ambiguous rule wording (needs a human to clarify the rule); the rule-checker process itself is unavailable or erroring (do not fall back to judging staleness yourself); an entry the rules flag is still actively referenced by a live session; or you reach the point of proposing a permanent purge of the archive, which requires explicit human approval before it happens.
 
 Report, at halt: which arm tripped, the full removal log, the remaining active-store count, and (if BLOCKED) the exact entry id and rule id that couldn't be resolved.
+```
+
+### 3. Agent Memory — Write-and-Verify Loop
+
+- **When:** You must persist ONE discrete fact into a long-term memory store (a memory MCP tool, a memory file, a vector/DB record, or an agent's notes file) and need proof it actually landed and reads back correctly — not just that the write call returned success — before treating the memory as durable.
+- **Loop:** assess target fact vs current stored state -> ONE write/overwrite action via the write path -> independent read-back via a DIFFERENT read path, compared against the canonical fact -> commit (done) on exact match / roll back or correct on mismatch -> decide continue/stop
+- **Stop:** SUCCESS: the independent read-back — via a tool/path distinct from the one used to write — returns content that matches <CANONICAL_FACT> exactly (or, for free-text stores, is confirmed semantically equivalent by the frozen comparison rule below), at <MEMORY_KEY/LOCATION>, with no other stored fact corrupted by the write · BUDGET: <MAX_ITERATIONS> total write attempts for this fact — default 3 · NO-PROGRESS: the same mismatch-type repeats on 2 consecutive attempts despite a materially different corrective action each time (not a verbatim retry); or the loop oscillates between two encodings/locations/phrasings of the same fact (A->B->A) without either one verifying · BLOCKED: the memory store is unreachable or returns a permission/auth error on either the write or the independent read path; the write requires overwriting or deleting an existing conflicting fact at the same key and no human approval for that overwrite has been given this session; or the read-back path itself cannot be made independent of the write path (no separate read tool/method exists) — in which case halt and report the gap rather than accepting the write tool's own "ok" as proof
+- **Model:** Both the write and the exact-match comparison are mechanical — run on the run's standard/cheaper model. Escalate to a stronger model only if the store is free-text/semantic (not exact-match) and VERIFY must judge whether a paraphrase or summarized read-back preserves the fact's meaning — that judgment call, and only that one, benefits from a stronger model. Never let the model that performed the write also be the one whose self-report substitutes for the independent read-back.
+
+```text
+GOAL (frozen — do not redefine mid-loop)
+Persist <CANONICAL_FACT> into <MEMORY_STORE> at <MEMORY_KEY/LOCATION>, reaching a state where an INDEPENDENT read-back — made via a tool/method DIFFERENT from whichever call performed the write — returns content matching <CANONICAL_FACT>, with no other existing memory entry corrupted or overwritten as a side effect. A write call returning success:true / 200 / "stored" is NEVER sufficient on its own; it only licenses attempting the independent read-back.
+
+Freeze before turn 1:
+- <CANONICAL_FACT>: the exact fact to store, in its final canonical wording/structure — decide this once, do not rephrase it turn to turn.
+- <MEMORY_STORE> / <MEMORY_KEY_OR_LOCATION>: the specific store and the exact key, path, entity name, or record id the fact must live at.
+- <WRITE_METHOD>: the tool/call used to write (e.g. `create_entities`/`add_observations`, a file write, an INSERT/UPSERT).
+- <READ_METHOD>: a tool/call that reads the SAME data through a genuinely different path than <WRITE_METHOD> (e.g. `search_nodes`/`open_nodes` after `add_observations`; re-opening the file from disk after an in-memory write; a SELECT in a fresh connection after an INSERT). If the store truly has no separate read path, say so now — that is a standing BLOCKED condition, not something to improvise around mid-run by trusting the write's own response.
+- <MATCH_RULE>: how equality is judged — byte-exact string/JSON match for structured stores, or, for free-text/semantic stores, the specific "preserves all of: X, Y, Z" checklist a comparison must satisfy. Freeze which one applies now.
+- <MAX_ITERATIONS> (default 3) and <OVERWRITE_POLICY> — if <MEMORY_KEY_OR_LOCATION> may already hold a conflicting fact, state now whether overwrite is pre-approved or requires a human gate at write time.
+
+PER-TURN SHAPE
+1. ASSESS — Read the current state of <MEMORY_KEY_OR_LOCATION> if this isn't turn 1 (via <READ_METHOD>, not by assuming last turn's write worked). Note whether it's empty, holds the target fact already, or holds something else (conflict).
+2. ONE ACTION — If a conflicting fact is present and <OVERWRITE_POLICY> requires a human gate, stop here and get that approval before writing; otherwise, if this is a retry, make ONE corrective write via <WRITE_METHOD> that concretely differs from the last attempt (fixed formatting/escaping/key/field — never a byte-identical resubmission of an attempt that already failed to verify). On turn 1 (or first attempt this run), make the initial write.
+3. VERIFY — Call <READ_METHOD> (never the write call's own return value, never a re-read through the exact function just called) and compare the result against <CANONICAL_FACT> using <MATCH_RULE>. Also confirm no unrelated key/record was altered by the write (spot-check one neighboring entry if the store supports batch/collection writes).
+4. DECIDE — If VERIFY confirms an exact match (and no collateral corruption): STOP: SUCCESS. If it fails: log what actually came back vs what was expected (the diff, not a "looks close" impression), increment attempt count, and go to the next turn with a genuinely different corrective action. If turn_count reaches <MAX_ITERATIONS>: STOP: BUDGET. If a NO-PROGRESS condition is met: stop there. If a BLOCKED condition is met: stop there, do not keep attempting.
+
+CARRY-FORWARD STATE (compact)
+- last_read_result: <exact content <READ_METHOD> returned last turn, verbatim>
+- last_mismatch_diff: <specific delta between last_read_result and <CANONICAL_FACT>, or "none" if turn 1>
+- attempts_tried: <list of (write payload shape, outcome) pairs already attempted — so no repeat is verbatim>
+- turn_count: <int> / budget <MAX_ITERATIONS>
+- conflict_status: <none | pre-existing conflicting fact found, overwrite gate: cleared/not-cleared>
+
+ACTION BAN
+- Never treat the write call's own "success"/"ok" response as proof of storage — always confirm via <READ_METHOD>.
+- Never repeat a byte-identical write payload after it already failed to verify — each retry must change something concrete (encoding, key, structure), not just resubmit and hope.
+- Never invent a read path that isn't actually independent of the write path (e.g., reading from the same in-process object the write just mutated) — if no independent read exists, that's BLOCKED, not a reason to trust the write.
+- Never overwrite a pre-existing conflicting fact without the human gate <OVERWRITE_POLICY> requires, even if the new write technically "succeeds."
+- Never oscillate between two phrasings/locations for the same fact (A→B→A) — that is NO-PROGRESS, not exploration.
+
+STOP — halt on the FIRST of:
+SUCCESS (<READ_METHOD>, called independently of <WRITE_METHOD>, returns content matching <CANONICAL_FACT> per <MATCH_RULE>, with no collateral corruption) | BUDGET (<MAX_ITERATIONS> write attempts used) | NO-PROGRESS (same mismatch-type repeats across 2 consecutive attempts despite genuinely different corrective actions, or A→B→A oscillation between two phrasings/locations) | BLOCKED (store/read path unreachable or auth-denied; write would overwrite a conflicting fact without required human approval; or no independent read path exists for this store). Report the exact last_read_result, last_mismatch_diff, and attempts_tried at the point of halt.
 ```
