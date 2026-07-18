@@ -1,3 +1,9 @@
 # python cache
 __pycache__/
 *.pyc
+
+# playwright test scratch (screenshots, snapshots)
+.playwright-mcp/
+
+# generated website output (CI rebuilds it from build_site.py on deploy)
+site/

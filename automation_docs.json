@@ -1,0 +1,178 @@
+{
+ "inbox-triage": {
+  "goal": "Turn inbound email into a triaged, drafted, and human-approved reply, cutting the time a person spends reading, routing, and composing responses while keeping a person as the final gate before anything goes out.",
+  "why_ai": "Classifying open-ended intent/urgency and drafting a reply grounded in an arbitrary thread and knowledge base both require reading and generating unstructured natural language, and no fixed rule table maps every possible email phrasing to the right category or response.",
+  "failure_modes": [
+   "Misclassification sends a billing dispute into the general queue instead of VIP/billing, delaying a time-sensitive refund past a policy deadline.",
+   "Draft reply confidently states a refund amount or delivery date the knowledge base doesn't actually support, and a rushed approver rubber-stamps it, turning an unverified claim into a commitment the company must honor.",
+   "The tone/policy/PII validation step is a keyword filter that misses PII in an unusual format (e.g., an account number embedded in prose), so a leak passes through to human review looking clean.",
+   "Retry-on-ambiguous-success logic misfires: the send API times out after the message actually went out, and a naive retry duplicates the reply to the customer."
+  ],
+  "reliability": [
+   "Human approval gate on every draft before send is non-negotiable here — this is the point where an external, customer-facing action happens, so no auto-send path exists regardless of classifier confidence.",
+   "Idempotency key per inbound message tied to the send action, so a retry after an ambiguous network response checks send status first and never double-sends.",
+   "Retry only the deterministic send step (3x with backoff) and only on unambiguous failure signals (5xx, connection reset) — never on timeout or unknown outcome, per the stated policy, to avoid duplicate sends.",
+   "Observability log (step 8) records intent, queue routed to, action taken, and latency per message, so misroutes and slow-downs surface in aggregate rather than only when a customer complains."
+  ]
+ },
+ "doc-extract": {
+  "goal": "Automatically turn incoming documents (uploads, emails, scans) into validated, structured database records, routing anything the system can't parse with confidence to a human reviewer instead of guessing.",
+  "why_ai": "Source documents vary in layout, phrasing, and field naming across vendors/templates, so mapping unstructured OCR text to a fixed schema requires semantic interpretation that fixed parsing rules or regexes can't generalize across formats.",
+  "failure_modes": [
+   "OCR misreads a digit or currency symbol (e.g., '8' as '3', or a decimal point dropped) and the extraction step confidently maps the wrong value into a numeric field that then passes range validation because it still looks plausible.",
+   "A scanned document with a non-standard layout (rotated page, multi-column table, handwritten annotation) causes the AI extraction step to silently pull a value from the wrong field pairing (e.g., 'ship-to' address written into 'bill-to'), which validation cannot catch because both are structurally valid strings.",
+   "The AI reports high confidence on a field it extracted from boilerplate or a header/footer rather than the actual document body, so the confidence-gate step (step 5) passes it through to the database as if it were reviewed data.",
+   "A low-quality scan (e.g., a faxed copy) produces garbled or near-empty OCR text in step 2; the extraction step in step 3 then has little to work with and returns low-confidence values, which step 5 correctly routes to the human review queue in step 7 — but since the pipeline has no retry or automated re-scan mechanism, every degraded scan lands in that queue as a manual case, and if nobody monitors queue volume, a burst of bad scans (e.g., a failing fax line) can silently back up processing for legitimate documents."
+  ],
+  "reliability": [
+   "Idempotency: tag each incoming document with a content hash or source ID before processing so a reprocessed OCR retry or a duplicate upload doesn't create a second database record.",
+   "Validation gate: enforce type/format checks (dates parse, currency fields numeric, required fields non-null) and range checks (e.g., invoice totals within a sane bound) as deterministic code in step 4, separate from and after the AI extraction, so no record reaches the database on the model's word alone.",
+   "Human-in-the-loop: the pipeline has two conditions that must both pass before step 6 writes to the store — step 4's validation (type/format/range) and step 5's confidence-threshold check. A failure at either gate routes to the same step 7 human review queue rather than auto-writing or auto-discarding the record; step 4's validation failure is effectively a second gate feeding step 7, not a separate subsystem, and no record reaches step 6 without clearing both.",
+   "Observability: log the extracted field values, the model's confidence score, the OCR source text, and which gate (validation or confidence) sent a record to review for every document (pass or fail), so a reviewer or auditor can trace a bad database record back to the exact extraction that produced it. Track human-review-queue volume and its breakdown by rejection reason (validation failure vs. low confidence) to catch systemic OCR degradation, since the pipeline has no separate quarantine system — all held records live in the single step-7 review queue."
+  ]
+ },
+ "support-triage": {
+  "goal": "Automatically triage each incoming support ticket, draft an on-brand KB-grounded reply, and route it to a human agent for a quick approve-or-edit step before anything reaches the customer, shortening the time from ticket creation to an accurate, sent reply.",
+  "why_ai": "Reading open-ended ticket text to judge topic, sentiment, and severity, and composing a natural-language reply that pulls the right facts from a knowledge base, both require language understanding and judgment that fixed keyword rules can't reliably provide.",
+  "failure_modes": [
+   "Misclassified severity — an angry-but-low-impact ticket read as high severity, or a quietly-worded billing outage read as low severity — causes wrong routing and SLA timer, so a genuinely urgent issue waits behind lower-priority tickets.",
+   "The draft reply states a policy detail not actually present in the KB (e.g. a refund window or feature capability it invented), and if the validation step's checker misses it, a human approver skimming quickly can still let it through.",
+   "A retry after a transient failure (e.g. timeout during posting) re-runs from an earlier step and double-posts the same reply to the customer, or posts the reply but fails to set status, leaving the ticket stuck open with the SLA timer never started.",
+   "A ticket bundling two issues (e.g. a billing question and a bug report) gets classified and drafted around only one of them, so the second issue is silently dropped from the reply."
+  ],
+  "reliability": [
+   "Idempotency keyed on ticket ID: before posting, check whether a reply has already been recorded for that ticket ID and skip posting if so, so retries after a crash or timeout never produce a duplicate customer-facing message.",
+   "Human approval gate before send: the draft, its classification, and the KB passages it cites are shown to an agent who must explicitly approve or edit — no reply is public-facing until a person signs off, since this is the step where an inaccurate statement would reach a customer.",
+   "Automated validation pass: the draft is checked against policy rules and against the KB it cites (flagging claims not traceable to a KB passage) before it ever reaches the human queue, cutting down what the approver has to catch manually.",
+   "Observability on the classification and routing step: log the assigned topic/sentiment/severity and routing outcome per ticket so misroutes and SLA-timer starts can be audited and the classifier's accuracy tracked over time rather than trusted blindly."
+  ]
+ },
+ "pr-review": {
+  "goal": "Give every pull request a fast, consistent first-pass review — deterministic checks plus an AI reading of the diff for bugs, clarity, and risk — so a human reviewer opens the PR with the noise already filtered out, while still making the actual merge call themselves.",
+  "why_ai": "Spotting a subtle bug, an unclear name, or a risky pattern in a diff requires reading the code the way a reviewer would — following intent across changed lines and inferring what could go wrong — which is a judgment call, not a pattern a linter or fixed rule set can enumerate in advance.",
+  "failure_modes": [
+   "The model flags a real issue but anchors it to the wrong line number or a line outside the diff, so the validation step drops a legitimate finding along with the noise.",
+   "A large or unusual diff (generated code, a vendored dependency bump, a mass rename) exceeds what the model can usefully read in one pass, so review quality quietly degrades without any error being raised.",
+   "The model produces a plausible-sounding but wrong claim about behavior (e.g., asserts a race condition exists where a surrounding lock already prevents it), and a reviewer who trusts the comment without checking wastes time or requests an unnecessary change.",
+   "Two commits pushed in quick succession trigger overlapping runs; if the idempotency key isn't scoped correctly to the SHA, the PR can end up with a stale comment from an in-flight run that no longer matches the latest code."
+  ],
+  "reliability": [
+   "Idempotency: the posted comment is keyed to the commit SHA and upserted (edited in place), not appended — a re-run on the same commit never duplicates it, and a new commit's comment always fully replaces the prior one.",
+   "Validation gate: any AI finding that can't be tied to a specific changed line in the diff is discarded before posting, so the comment can never cite code the PR didn't touch.",
+   "Human approval as the hard gate: the workflow can comment, label, and even flag a blocking issue, but it never merges, approves, or dismisses reviews itself — that decision stays with a person regardless of what the AI step concluded.",
+   "Scoped retries with no silent escalation: re-runs are triggered only by new commits (not by cron or arbitrary retry loops), so a failed run doesn't retry blindly against unchanged code; deterministic steps (tests, linters, scanners) run every time and their pass/fail status is never overridden by the AI step's opinion."
+  ]
+ },
+ "content-repurpose": {
+  "goal": "Turn one newly published article or video into a set of channel-specific promotional variants (social post, email blurb, discussion thread) automatically, so distribution goes out within minutes instead of waiting on someone to manually repurpose the piece for each channel.",
+  "why_ai": "Adapting the same source material into distinct voices, lengths, and structural conventions per channel — a punchy social hook versus a scannable email versus a threaded narrative — is a judgment-driven rewriting task that a fixed template or find-replace script cannot do.",
+  "failure_modes": [
+   "A variant overstates a claim from the source (turns a hedged finding into a flat assertion), and the automated claims check misses it because it only scans for banned phrases rather than comparing claim strength against the source.",
+   "The thread variant fails the brand-voice check on the same issue every regeneration attempt; the retry-only-the-failed-variant policy keeps producing the same failure and the batch sits stuck in the approval queue with no one flagging that it's wedged.",
+   "The human reviewer approves the whole batch from a summary view without opening each channel's rendered variant individually, so a broken link or an off-brand line in the email variant ships because approval was effectively rubber-stamped.",
+   "The publish step partially succeeds (social posts go out, email send fails silently), but the data-store write still records the batch as fully shipped, leaving a false record that nothing needs follow-up."
+  ],
+  "reliability": [
+   "Human approval is required before the publish step and is the only point authorized to trigger the irreversible, public action of posting; the approval view must render each channel's actual variant, not a batch summary, since a rubber-stamped approval is functionally no gate at all.",
+   "Validation runs deterministic checks (length limits per channel, required disclaimers, banned-phrase scan) plus a model-based claims/tone check, and a variant that fails twice on the same rule stops auto-regenerating and routes to a human instead of looping silently.",
+   "Retries are scoped to the single failed variant, keyed by article ID plus channel, so a regeneration never touches or re-sends channels that already passed and were approved.",
+   "The publish step writes to the data store only after receiving a per-channel success confirmation from that channel's publish call, so a partial failure is recorded as partial, not marked as fully shipped, and surfaces as an item needing manual follow-up."
+  ]
+ },
+ "anomaly-alert": {
+  "goal": "Detect a sustained metric threshold breach, attach a likely root-cause diagnosis to the alert, and route it to the on-call engineer (escalating to the next tier if it isn't acknowledged or resolved within a set window) — without flooding the channel with duplicate or flapping alerts.",
+  "why_ai": "Pinpointing the likely cause requires correlating a noisy, unstructured mix of recent deploys, config changes, and log excerpts into a plausible narrative — a pattern-matching and summarization task that resists a fixed if/then rule set as the set of possible causes and log shapes keeps changing.",
+  "failure_modes": [
+   "The diagnosis step confidently names a plausible-sounding but wrong root cause (e.g. blames a recent deploy that's actually unrelated), sending on-call down the wrong path while the real cause goes unaddressed.",
+   "A brief, self-correcting spike gets misclassified as 'sustained' by the deterministic check if the sustain window is too short, triggering an alert for a non-issue.",
+   "Two related metrics breach thresholds seconds apart from the same root cause but don't dedupe if the incident-matching key is too narrow, producing duplicate pages for on-call.",
+   "The escalation gate fires even though the original on-call is actively working the incident (e.g. mid-fix but the metric hasn't recovered yet), paging a second tier unnecessarily and adding noise/confusion mid-response."
+  ],
+  "reliability": [
+   "Diagnosis output is labeled as a hypothesis, not a fact, and the alert always includes the raw signals (which changes, which log lines) so the on-call engineer can verify before acting rather than trusting the AI's conclusion outright.",
+   "Dedupe key is a fingerprint of (metric name + service + rough time window), with rate-limiting capping alert volume per incident so a flapping metric can't spam the channel; state of 'open incidents' is checked before any new alert is sent.",
+   "Escalation gate checks incident status (acknowledged/in-progress) as well as elapsed time before paging the next tier, and any escalation requires the current on-call state to be visibly stale, not just a timer expiry.",
+   "All diagnosis inputs, the generated hypothesis, and every alert/escalation event are logged with timestamps so the chain from breach to diagnosis to notification can be replayed and audited after the fact."
+  ]
+ },
+ "lead-enrich": {
+  "goal": "Automatically enrich, qualify, and score every new inbound lead against the ICP, then route qualified leads into CRM ownership queues while flagging ambiguous cases for human SDR review — so reps spend time on leads worth calling instead of manually researching and triaging every submission.",
+  "why_ai": "Qualifying fit against an ICP requires weighing heterogeneous, partly-textual signals (firmographic data, job title phrasing, stated use case, funding stage) that don't reduce to a fixed rule table the way a deterministic scorecard would.",
+  "failure_modes": [
+   "Enrichment source returns stale or wrong company data (e.g., a lead matched to the wrong company by domain collision), and the model scores fit against the wrong firmographic profile without any signal that the match was uncertain.",
+   "The model is confidently wrong on borderline industries it wasn't tuned for (e.g., scores a lookalike-but-irrelevant vertical as high-fit because the company description uses similar keywords to the ICP), auto-routing a bad lead to a rep as if it were qualified.",
+   "Re-scoring from cached enrichment after the ICP definition or routing threshold changes silently uses stale enrichment data that no longer reflects the company's current state (layoffs, pivot, acquisition), producing a score that looks fresh but is based on old facts.",
+   "Reasoning text the model writes to justify the score is fluent but doesn't actually match the score it assigned (e.g., lists disqualifying facts but still outputs a high score), and nobody downstream notices because the CRM just displays both fields side by side."
+  ],
+  "reliability": [
+   "Enrichment results are cached and content-hashed per lead so retries re-run only the AI scoring step, not the enrichment calls — avoids burning API/data-vendor quota and avoids re-fetching data that hasn't changed since the last attempt.",
+   "Decision gate requires the score plus a machine-checkable confidence value; only scores above both the routing threshold AND a minimum confidence floor auto-route, anything else falls to the SDR review queue by default rather than defaulting to auto-route on ambiguous output.",
+   "Every write to the CRM includes the raw enrichment snapshot, the score, and the model's reasoning text as separate auditable fields (not just a final number), so an SDR or manager can see why a lead was scored a given way and catch cases where reasoning contradicts the score.",
+   "No fully-automated action beyond CRM record creation and internal routing labels — nothing in this workflow sends outbound email, changes pricing, or takes a public-facing action, so the irreversible/customer-facing step (the SDR's outreach) stays behind a human decision even when the lead auto-routes."
+  ]
+ },
+ "batch-conformance": {
+  "goal": "Take each nightly (or per-batch) data load through schema validation, repair obviously-fixable rows with a model, and load only what re-validates clean — so the warehouse never silently absorbs malformed data and every unfixable row lands in a quarantine table with a report instead of being dropped or blocking the whole batch.",
+  "why_ai": "Most malformed-row causes are already handled by deterministic tooling and should be fixed with code, not a model: inconsistent date formats are a solved problem for standard parsers (e.g. dateutil), and encoding/mojibake artifacts are a solved problem for normalizers like ftfy/chardet — neither requires inferring anything from row context. The genuine case for a model is narrower: transposed fields (e.g., values swapped between columns) and truncated values, where there's no fixed rule that recovers the correct value — the repair requires judgment about what the row was likely trying to say, informed by the surrounding row context, case by case. The pipeline should run deterministic repairs first and send the AI step only the residual rows those repairs couldn't fix.",
+  "failure_modes": [
+   "The AI repair step 'corrects' a malformed row into a value that is syntactically valid but semantically wrong (e.g., swaps a truncated ID for a plausible-looking but incorrect one), and it passes re-validation because the schema check only enforces shape, not truth.",
+   "A batch has an unusually high proportion of malformed rows (e.g., a source system changed its export format), and the AI repair step processes all of them without anyone noticing the whole batch is off-spec before it hits the warehouse.",
+   "Reprocessing a quarantined row after a manual fix silently succeeds twice because the load step isn't actually idempotent for that row, producing duplicate records in the warehouse.",
+   "The AI repair step times out or errors on a subset of rows mid-batch, and those rows are neither loaded nor quarantined, disappearing from both the warehouse and the report."
+  ],
+  "reliability": [
+   "Idempotent load keyed on a stable row identifier (e.g., natural key + batch id) so re-running the load step or reprocessing a fixed quarantined row never creates duplicates.",
+   "Cap the fraction of rows the AI is allowed to repair per batch (e.g., halt and alert if repairs exceed a threshold like 5-10% of the batch) since a spike signals an upstream format change rather than routine noise.",
+   "Re-validation of repaired rows uses the same frozen schema as the original pass, with the repair step logging original value, repaired value, and confidence for every change so a human can audit what the model altered before it becomes load-bearing data.",
+   "Quarantine table and report are the only path for unfixable or repair-failed rows; nothing is dropped silently, and the report is reviewed by a human before quarantined rows are manually corrected and requeued, since these are the rows most likely to represent real upstream problems rather than transient noise."
+  ]
+ },
+ "meeting-actions": {
+  "goal": "Turn a raw meeting transcript into tracked, owned action items automatically once the transcript is ready, without a human manually re-reading the whole meeting to write tasks.",
+  "why_ai": "Extracting decisions, owners, and action items requires understanding loosely structured, conversational language (who committed to what, phrased indirectly or across turns) that keyword or pattern rules cannot reliably parse.",
+  "failure_modes": [
+   "The model attributes an action item to the wrong attendee (e.g. assigns a task to the person who was discussed rather than the person who volunteered), producing a plausible-looking but incorrect owner.",
+   "A tentative or hypothetical remark (\"maybe we should look into X\") gets extracted as a firm commitment, inflating the task list with things nobody actually agreed to do.",
+   "The same transcript is reprocessed (e.g. re-uploaded, corrected version posted) and, without a stable meeting id check, the same action items get created a second time in the tracker.",
+   "An action item is missing a clear owner or due date because it was implied rather than stated; if validation is lenient it slips through and lands in the tracker under-specified."
+  ],
+  "reliability": [
+   "Idempotency: create/update tasks keyed by (meeting_id, action_item_hash) so reprocessing the same transcript never inserts duplicate tasks in the tracker.",
+   "Validation gate: reject any extracted item missing an explicit owner or due date before it's shown to the attendee for approval — it returns to \"needs clarification\" rather than being silently dropped or guessed.",
+   "Human approval: the attendee reviews and can edit, remove, or reassign each extracted item before any task is created — nothing writes to the tracker on the AI's extraction alone.",
+   "Observability: log the extraction step's raw output alongside the final approved list so drift between what the model proposed and what the human actually approved can be reviewed and used to tune the prompt over time."
+  ]
+ },
+ "social-respond": {
+  "goal": "Handle inbound brand mentions on social media consistently and fast — triaging every mention into ignore/thank/support/escalate, drafting an on-brand reply, and only publishing after a human signs off — so nothing public goes out unreviewed and nothing urgent sits unseen.",
+  "why_ai": "Classifying sentiment, intent, and risk, and then drafting a reply that reads as on-brand rather than templated, both require interpreting ambiguous natural language (sarcasm, mixed sentiment, implicit complaints) in context — a rules/keyword engine would misroute enough edge cases that a human ends up re-reading every mention anyway, defeating the purpose of automating the triage.",
+  "failure_modes": [
+   "The classifier reads a sarcastic or backhanded mention as positive and routes it to 'thank', producing a cheerful reply that looks tone-deaf next to the original post once a human skims it too fast to catch the mismatch.",
+   "A mention that mixes a genuine safety or billing complaint with casual language gets scored as low-risk 'support' instead of 'escalate', so it sits in a normal queue instead of reaching someone who can act on it same-day.",
+   "The draft-response step pulls a generic on-brand phrase that inadvertently promises something (a refund, a fix timeline) the brand hasn't actually committed to, and a rushed human approver rubber-stamps it without checking the claim against policy.",
+   "Near-duplicate mentions (a quote-tweet plus the original, or a reposted screenshot) get treated as distinct mention ids, so the same person receives two separate public replies that contradict each other slightly."
+  ],
+  "reliability": [
+   "Idempotency: every mention carries a stable platform-issued mention id; the workflow records id -> action taken so a retried run (e.g., after a timeout) recognizes it's already classified/drafted/posted and skips reprocessing instead of double-replying.",
+   "Human approval gate: no reply reaches step 6 without an explicit human approve action tied to that specific draft text; if the draft is edited post-approval, the approval is invalidated and must be re-granted on the edited version.",
+   "Escalation routing with SLA visibility: anything classified 'escalate' is surfaced in a queue with a visible age/time-since-mention indicator, not just filed silently, so a stale unactioned escalation is noticeable rather than buried.",
+   "Observability: every mention's full path (raw text, assigned sentiment/intent/risk, chosen route, draft version history, approver, post timestamp) is logged in one place so a mis-routed or mis-worded reply can be traced back to which step produced it."
+  ]
+ },
+ "competitor-watch": {
+  "goal": "Weekly cron fetches a fixed list of competitor pages, diffs each against the prior week's snapshot, and has an AI step read the material diffs and produce a short summary of what changed and why it matters, so the team gets a single notification only on weeks that carry real signal.",
+  "why_ai": "Deciding whether a diff (e.g. a reworded pricing tier, a new feature bullet quietly added to a landing page) is materially meaningful versus cosmetic (CSS class changes, timestamp updates, ad-copy rotation) requires judgment about business significance that a keyword or line-diff rule can't reliably make.",
+  "failure_modes": [
+   "A competitor site redesign changes the whole page's markup/structure in one week, producing a diff that is 95% noise; the AI step may either drown the one real change in boilerplate or, if it discounts the whole diff as 'redesign noise,' miss the genuine content change buried in it.",
+   "A watched page starts requiring login or adds bot-blocking/CAPTCHA after a competitor notices scraping; the fetch step silently returns an error or a login wall page, and the diff against last week's real snapshot reads as a 'complete content replacement,' which the AI could misreport as a major change (e.g. 'they removed their entire pricing page') when nothing on the live site actually changed.",
+   "The AI summary correctly flags a material change but misattributes *why it matters* (e.g. calls a minor copy tweak a 'pricing strategy shift') because it lacks the business context a human analyst would apply, and that mischaracterization goes straight into a team notification.",
+   "Per-page retry means one page can fail fetch every single week (e.g. that URL moved) and silently drop out of the diff set indefinitely, so the workflow looks healthy (still running, still notifying) while quietly covering fewer competitors over time."
+  ],
+  "reliability": [
+   "Per-page fetch retry (e.g. 2-3 attempts with backoff) so a single transient network blip doesn't skip a page for the whole week, combined with logging any page that fails all retries so a human can see coverage gaps rather than the workflow going silent about them.",
+   "Snapshot storage is append-only and keyed by page+week, so 'last week's snapshot' is always the most recent successful fetch for that page (not overwritten by a failed/partial fetch) — this keeps the diff step comparing real content to real content instead of diffing against an error page.",
+   "The decision gate requires the AI's material-change judgment to include a short evidence excerpt (the actual diff lines it based the call on) alongside the summary, so a human reading the notification can quickly sanity-check the AI's reasoning rather than trusting the verdict blind.",
+   "Notification step is the only place with an external side effect (message to the team) and stays low-stakes by design — no auto-actions like updating pricing or posting publicly are taken on the AI's read, so a wrong 'material change' call costs a human a few minutes of review rather than causing any irreversible action."
+  ]
+ }
+}

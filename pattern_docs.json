@@ -1,0 +1,79 @@
+{
+ "human-escalation": {
+  "definition": "The loop treats certain conditions (missing credential/resource, ambiguous spec, a test that looks wrong) as outside its authority to resolve autonomously, and instead of guessing or forcing a workaround it stops and emits a structured handoff — state tried, exact blocker, decision needed — for a human to act on.",
+  "ideal_use": "Use it wherever the loop's action space includes irreversible or judgment-laden branches (editing tests, touching prod, spending money, resolving ambiguous requirements) where a wrong autonomous guess costs more than a pause.",
+  "poor_use": "Don't lean on it as the only safety net for routine, recoverable failures (flaky test, missing dependency) — that turns every minor hiccup into a human bottleneck.",
+  "failure_modes": [
+   "Threshold miscalibration toward over-escalation: the loop stops on things it could safely retry, making the human a bottleneck for noise.",
+   "Threshold miscalibration toward under-escalation: the model rationalizes around the trigger (e.g. quietly 'fixes' a test it privately thinks is wrong instead of flagging BLOCKED) because finishing looks better than admitting it's stuck.",
+   "Underspecified handoff: the model stops without capturing what was tried or the exact error, forcing the human to re-derive state before they can help.",
+   "No resumption path: the pattern defines how to stop but not how the loop resumes after the human responds, so escalation becomes a dead end."
+  ]
+ },
+ "mechanical-verifier": {
+  "definition": "Loop termination is decided by a program that either passes or fails — test runner, compiler, schema validator, or scanner — never by the agent's own judgment of the diff or its self-report of success.",
+  "ideal_use": "Any task where a pre-existing, trustworthy oracle already exists (test suite, spec file, build toolchain) and the agent's job is to make that oracle pass without touching it.",
+  "poor_use": "Tasks where no reliable mechanical check exists (subjective quality, open-ended design, UX judgment) — forcing a proxy metric here just teaches the agent to game the proxy instead of the goal.",
+  "failure_modes": [
+   "Agent edits or weakens the verifier itself (deletes/skips failing tests, loosens schema, comments out assertions) to reach 'done' faster — must be explicitly forbidden and the verifier locked/off-limits.",
+   "Verifier is wrong or stale (a broken test asserting incorrect behavior) and the agent either force-fits code to match a bad spec or stalls indefinitely; needs an explicit BLOCKED escape hatch instead of blind compliance.",
+   "Passing the verifier is necessary but not sufficient — tests pass but coverage of the real requirement is thin, or firmware compiles but the runtime behavior was never actually observed, giving false confidence.",
+   "Flaky or nondeterministic checks (intermittent test failures, timing-dependent serial output) cause the loop to oscillate or misattribute pass/fail to the wrong change."
+  ]
+ },
+ "adversarial-verify": {
+  "definition": "A separate verification pass or role actively tries to attack, falsify, or find a counterexample to a frozen claim (bug fix, finding, fact); the claim is only accepted into the record if it survives N rounds of that attack, with each attempt and outcome logged.",
+  "ideal_use": "Use when a false positive is costly and independently checkable (a security finding, a \"this bug is fixed\" claim, a factual assertion feeding a downstream decision), so an attack attempt can be verified against reproducible evidence rather than opinion.",
+  "poor_use": "Don't use it for subjective or preference-laden claims (style, prioritization, \"best\" design) where there is no falsifiable repro or PoC for the skeptic to attack -- the loop just produces theater with a round counter.",
+  "failure_modes": [
+   "Verifier and claimant share the same underlying model and context, so 'independent' attack rounds still miss the same blind spots -- no true adversarial diversity.",
+   "Round/budget count is fixed but arbitrary, so a claim 'survives' only because the skeptic ran out of attempts, not because it is actually correct.",
+   "Freezing the claim verbatim prevents scope creep but also lets a narrowly worded claim dodge a real attack that would hit a slightly broader, equally true restatement of it.",
+   "Overhead scales linearly with claim volume and is wasted on claims that were never actually in dispute, making it impractical as a blanket default rather than a targeted check."
+  ]
+ },
+ "ratchet": {
+  "definition": "A monotonic counter tracked per-file or per-metric (error count, violation count, diff-from-golden) that a loop is only permitted to move toward a frozen target — any step that increases it is rejected and the edit rolled back rather than accepted.",
+  "ideal_use": "Best for large-scope incremental convergence toward a single frozen numeric threshold (strict-mode migration, schema conformance, dependency upgrade) where per-step verification is cheap and deterministic enough to gate every edit.",
+  "poor_use": "Avoid it when the metric is noisy, sampled, or only meaningful in aggregate (flaky test rates, subjective quality scores), since a ratchet on a noisy signal will falsely block valid progress or falsely lock in a bad snapshot.",
+  "failure_modes": [
+   "Metric gaming: the agent satisfies the ratchet by narrowing scope (suppressions, exemption lists, `@ts-ignore`) instead of fixing the underlying issue — the TS-strict example only closes this by also requiring the exemption list to reach empty.",
+   "False non-monotonicity: legitimate refactors (e.g. splitting one file into several) can transiently raise a per-file counter even though they're net progress, causing a correct step to be rejected.",
+   "Stale baseline: if the starting snapshot is taken after undetected regressions already exist, the ratchet locks those regressions in as the permanent floor instead of the true target.",
+   "Granularity blindness: an aggregate (not per-file) ratchet can hide one file getting worse behind others improving, so the total never moves backward even though a real regression occurred."
+  ]
+ },
+ "characterization-test": {
+  "definition": "A loop that freezes the refactor step until a suite of tests capturing the module's actual current input/output behavior (not intended or correct behavior) exists and passes, so later structural changes can be checked against that suite rather than against a spec.",
+  "ideal_use": "Use when a legacy module has little or no test coverage, its correctness rationale is unclear or undocumented, and the immediate goal is safe structural change (splitting, extracting, renaming) rather than fixing behavior.",
+  "poor_use": "Poor fit when the current behavior is already known to be wrong, since the loop will faithfully pin down and protect the bug rather than let you fix it.",
+  "failure_modes": [
+   "Characterization tests lock in an incomplete entry-point list frozen early in the loop, so refactors quietly break code paths never covered by the freeze.",
+   "Tests assert on incidental details (log formatting, iteration order, exception message text) rather than meaningful outputs, causing false failures on harmless refactors or false passes on real regressions.",
+   "Without an explicit zero-product-change boundary, the model conflates characterization with correctness and 'fixes' bugs it encounters while writing tests, changing the very behavior it was meant to pin down.",
+   "Golden-master/snapshot-style characterization can pass while masking non-determinism (timestamps, ordering, floating point) that only surfaces later, giving false confidence in the safety net."
+  ]
+ },
+ "commit-revert": {
+  "definition": "After each turn, the agent runs a fixed verification command and compares the outcome to the current baseline: if the result strictly improved (or first reached full pass), it commits the working tree as the new known-good state; if it regressed, stayed unchanged, or was ambiguous, it reverts (`git reset`) to the last known-good commit before continuing. This bounds damage from any single bad or non-improving turn to one discarded attempt rather than letting it compound into later turns.",
+  "ideal_use": "Use it when there is a single cheap, deterministic, binary verification signal (test suite exit code, compile+flash success) that can run after every turn and that reliably reflects whether the turn made things strictly better.",
+  "poor_use": "Avoid it when the success signal is slow, flaky, or subjective (long-running integration suites, human-judged writing quality) — the commit/revert cycle then either stalls the loop or reverts on noise instead of real regressions.",
+  "failure_modes": [
+   "Verification command is weaker than the actual goal (e.g. a trivial or tautological regression test), so the loop commits baselines that pass checks without satisfying the frozen goal.",
+   "Flaky or non-deterministic tests cause spurious reverts of good work or spurious commits of broken work, since the loop cannot distinguish a real regression from a flake.",
+   "Revert scope mismatch: git reset only rolls back tracked source, so edits to untracked state (env vars, external services, flashed firmware, DB migrations) leave the 'known-good' baseline corrupted in the real world even though the repo looks clean — build-verify-3's firmware loop resets tracked source every turn while the device flash itself is untracked, external, physical state.",
+   "Local-optimum lock-in: because any turn that regresses, stalls, or is ambiguous gets reverted immediately, the loop can get stuck unable to make a temporarily-worse edit that's necessary en route to a better final state, e.g. a refactor that must break tests mid-way — mitigated in the corpus by designs like refactor-safe-1's deliberate one-small-reversible-step structure."
+  ]
+ },
+ "anti-oscillation": {
+  "definition": "The loop instruction has the model diff each new attempt against a short rolling history of recent attempts — not just the immediately-prior one, so simple A→B→A→B cycling is caught, not only back-to-back repeats — and self-report/decline to proceed when a new attempt is textually or structurally identical to any entry in that history, stating why the last attempt failed and naming a genuinely different lever before retrying. This is a self-policed convention, not an enforced rejection: without an external log or diff tool the model can silently fail to honor it across context resets, and \"textually or structurally identical\" is itself an imprecise, gameable proxy for \"same approach\" (it misses cosmetic renames and can't distinguish same-root-cause-different-syntax from a real fix).",
+  "ideal_use": "Use in fixed, deterministic-verification loops (failing test suite, regression test, benchmark threshold) where a model can otherwise cycle between a small set of previously-tried approaches while hoping one eventually sticks.",
+  "poor_use": "Skip it in loops with high run-to-run noise (flaky tests, network-dependent benchmarks) where retrying the same approach unchanged is the correct move to distinguish signal from flake.",
+  "failure_modes": [
+   "Cosmetic-diff gaming: renaming a variable or reordering lines counts as \"not identical\" under the textual/structural check, so oscillation continues under a fig leaf of novelty.",
+   "Cross-reset amnesia: no mechanism enforces the ban across context resets or compaction, so the agent forgets what it already tried and re-attempts a previously-failed approach unknowingly.",
+   "Exhaustion drift: without a hard cap on distinct approaches tried, the model runs out of plausible fixes and starts inventing implausible ones just to avoid repeating, drifting from the actual bug.",
+   "Definitional ambiguity: \"same approach\" is undefined at the right grain (same file/different line vs. same root cause/different syntax), leaving the model to self-adjudicate the boundary with no external log to check itself against."
+  ]
+ }
+}
