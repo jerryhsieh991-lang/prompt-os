@@ -281,6 +281,16 @@ class BuildSiteTests(unittest.TestCase):
         self.assertIn('aria-label="Search prompts"', library)
         self.assertIn('id="count" class="lib-count" role="status"', library)
 
+    def test_view_transition_css_is_progressive_and_motion_safe(self) -> None:
+        css = (build_site.SITE / "assets" / "style.css").read_text(encoding="utf-8")
+        self.assertIn("@view-transition{navigation:auto}", css)
+        self.assertIn("::view-transition-old(root)", css)
+        self.assertIn("::view-transition-new(root)", css)
+        self.assertIn("view-transition-name:site-header", css)
+        self.assertIn("@media (prefers-reduced-motion:reduce)", css)
+        self.assertIn("::view-transition-group(*)", css)
+        self.assertNotIn("transition:all", css)
+
     def test_generated_pages_have_share_metadata(self) -> None:
         descriptions: list[str] = []
         for path in build_site.SITE.rglob("*.html"):

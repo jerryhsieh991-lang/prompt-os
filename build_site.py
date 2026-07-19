@@ -709,6 +709,8 @@ for _a in AUTOMATIONS:
 
 def detect_patterns(p: dict) -> set:
     """Which discriminating patterns THIS prompt exhibits (keyword/field evidence)."""
+    if "_patterns" in p:
+        return p["_patterns"]
     text, low, fk = p["prompt_text"], p["prompt_text"].lower(), p["family_key"]
     found = set()
 
@@ -749,6 +751,7 @@ def detect_patterns(p: dict) -> set:
         found.add("worklist-codemod")
     if has("shadow", "expand-migrate-contract", "expand, migrate", "dual-write", "dual write", "shadow-read"):
         found.add("shadow-verify")
+    p["_patterns"] = found
     return found
 
 
@@ -946,7 +949,7 @@ def chip(text: str, cls: str = "") -> str:
 
 def json_for_script(value) -> str:
     """Serialize data for an inline script without allowing data to close the tag."""
-    return (json.dumps(value, ensure_ascii=False)
+    return (json.dumps(value, ensure_ascii=False, separators=(",", ":"))
             .replace("&", "\\u0026")
             .replace("<", "\\u003c")
             .replace(">", "\\u003e")
@@ -1951,6 +1954,11 @@ CSS = r""":root{
 }}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
+@view-transition{navigation:auto}
+::view-transition-old(root){animation:vt-out .16s ease-out both}
+::view-transition-new(root){animation:vt-in .2s ease-out both}
+@keyframes vt-out{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-4px)}}
+@keyframes vt-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--ink);
   line-height:1.6;-webkit-font-smoothing:antialiased;font-size:16px}
 .wrap{max-width:var(--wrap);margin:0 auto;padding:0 24px}
@@ -1965,7 +1973,7 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 
 /* header/footer */
 .site-head{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);
-  backdrop-filter:saturate(1.4) blur(8px);border-bottom:1px solid var(--line)}
+  backdrop-filter:saturate(1.4) blur(8px);border-bottom:1px solid var(--line);view-transition-name:site-header}
 .head-inner{display:flex;align-items:center;justify-content:space-between;height:60px}
 .brand{font-weight:700;font-size:1.15rem;color:var(--ink);letter-spacing:-.02em}
 .brand span{color:var(--warm)}
@@ -2383,7 +2391,7 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
   background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px}
 .lv-ring{width:230px;height:230px}
 .lv-ring-path{fill:none;stroke:var(--line-strong);stroke-width:2}
-.lv-node circle{fill:var(--panel);stroke:var(--line-strong);stroke-width:2;transition:all var(--dur-standard) var(--ease-spring)}
+.lv-node circle{fill:var(--panel);stroke:var(--line-strong);stroke-width:2;transition:fill var(--dur-standard) var(--ease-spring),stroke var(--dur-standard) var(--ease-spring)}
 .lv-node text{font-family:var(--mono);font-size:8.5px;fill:var(--muted);transition:fill var(--dur-standard)}
 .lv-node.active circle{fill:var(--accent);stroke:var(--accent);r:11}
 .lv-node.active text{fill:var(--ink);font-weight:700}
@@ -2427,6 +2435,7 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 
 /* reduced-motion: hard stop, snap to final states */
 @media (prefers-reduced-motion:reduce){
+  ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}
   *,*::before,*::after{animation-duration:1ms!important;animation-iteration-count:1!important;
     transition-duration:1ms!important;scroll-behavior:auto!important}
   .reveal{opacity:1!important;transform:none!important}
@@ -3013,10 +3022,13 @@ def build():
         "full_title": p["title"], "when": p["when"],
         "family_key": p["family_key"], "family_title": p["family_title"],
         "verifier_type": p["verifier_type"], "model_hint": p["model_hint"],
-        "length_bucket": p["length_bucket"], "starter": p["starter"],
+        "starter": p["starter"],
         "prompt_text": p["prompt_text"],
     } for p in prompts]
-    (SITE / "data" / "prompts.json").write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+    (SITE / "data" / "prompts.json").write_text(
+        json.dumps(index, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
     (SITE / "index.html").write_text(render_home(prompts, principles, stats), encoding="utf-8")
     (SITE / "library.html").write_text(render_library(), encoding="utf-8")
