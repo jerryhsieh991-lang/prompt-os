@@ -15,7 +15,7 @@ import build_site
 
 EXPECTED_PROMPTS = 149
 EXPECTED_FAMILIES = 23
-EXPECTED_HTML_PAGES = 209
+EXPECTED_HTML_PAGES = 210  # 11 top-level pages + 149 prompt + 23 family + 15 pattern + 12 automation
 
 
 class LinkCollector(HTMLParser):
