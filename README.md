@@ -7,7 +7,7 @@ Three parts, nothing more:
 
 | Folder | What it is |
 |--------|------------|
-| **[loops/](loops/)** | A library of **158 reusable loop prompts** across 26 loop families (build→verify, debug, red-team, refactor, research-until-dry, migration, eval, orchestration, extraction, incident response, API integration, …). Each is copy-pasteable, model-agnostic, and has an explicit stop condition so an agent can't loop forever. Start at [loops/README.md](loops/README.md). |
+| **[loops/](loops/)** | A library of **170 reusable loop prompts** across 32 loop families (build→verify, debug, red-team, refactor, research-until-dry, migration, eval, orchestration, extraction, incident response, API integration, …). Each is copy-pasteable, model-agnostic, and has an explicit stop condition so an agent can't loop forever. Start at [loops/README.md](loops/README.md). |
 | **[agents/prompt-loop-engineer.md](agents/prompt-loop-engineer.md)** | One bounded agent: given a task it classifies the loop, writes the loop prompt, specifies the harness (stop conditions, fan-out, anti-runaway guard), and emits a ready-to-run spec. |
 | **[research/fable-5-usage.md](research/fable-5-usage.md)** | Multi-agent, adversarially-verified research on how people actually use Claude Fable 5 — feeds the agent's model-routing decisions (only 6/12 headline claims survived verification; the report says which). |
 
@@ -39,4 +39,4 @@ The library and research were generated through multi-agent authoring with adver
 and then human-reviewed. Regenerate/extend by editing the loop families and re-running the same
 pipeline.
 
-<!-- Counts verified 2026-07-19 from `python3 build_site.py`: 158 prompts across 26 families. -->
+<!-- Counts verified 2026-07-19 from `python3 build_site.py`: 170 prompts across 32 families. -->

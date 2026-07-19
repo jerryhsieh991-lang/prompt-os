@@ -89,6 +89,12 @@ FAMILY_DESC = {
     "incident-response": "Drive incident response from triage to verified mitigation with one action per turn, evidence capture, and explicit escalation gates.",
     "structured-extraction": "Extract structured records from messy documents with schema validation, independent corroboration, and human-review fallback when fields cannot be trusted.",
     "video-generation": "Iterate video generations against frozen visual, OCR, or motion verifiers, with cost gates and human approval before paid or public steps.",
+    "translation-localization": "Translate and localize verified by an independent signal — blind back-translation or a mechanical placeholder/length/glossary linter — not the translator's own read.",
+    "performance-optimization": "Speed and memory loops where every change is kept only if a frozen benchmark or profiler measures the win, with correctness held green — never an unmeasured 'should be faster'.",
+    "accessibility-audit": "Drive a UI toward accessibility one fix per turn, verified by an automated scanner or scripted keyboard/AT harness, honest that passing automation is a floor, not proof.",
+    "security-pentest": "Authorized, defensive security testing where a finding counts only if a proof-of-concept reproduces, and a fix counts only if the PoC stops reproducing plus a regression test bites.",
+    "summarization-faithful": "Summarize or synthesize so every claim traces to a source span an independent checker confirms — remove what can't be supported, surface contradictions instead of averaging them.",
+    "jailbreak-hardening": "Harden guardrails against jailbreaks and prompt-injection against a frozen red-team suite, keeping a held-out set, gated on blocking attacks AND preserving benign/legitimate behavior.",
 }
 
 
