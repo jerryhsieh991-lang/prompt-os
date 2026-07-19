@@ -895,6 +895,7 @@ def page(title: str, body: str, prefix: str, *, desc: str = "", extra_head: str 
       <a href="{prefix}automation.html">Automation</a>
       <a href="{prefix}families.html">Families</a>
       <a href="{prefix}anatomy.html">Anatomy</a>
+      <a href="{prefix}evolve.html">Evolve</a>
       <a href="{prefix}glossary.html">Glossary</a>
     </nav>
   </div>
@@ -1428,6 +1429,78 @@ def render_graph(prompts: list[dict], related: dict) -> str:
     return page("Constellation · prompt-os", body, "",
                 desc="An interactive constellation of every prompt, clustered by family, with real "
                      "relationship edges from shared patterns and curation near-duplicates.")
+
+
+# ---- Prompt evolution -------------------------------------------------------
+# A curated teaching progression: one instruction gaining one anatomy layer per
+# stage. Authored here (accurate, grounded in the loop principles), not generated.
+# New content at each stage is wrapped in [[...]] and rendered as <ins>.
+EVOLUTION = [
+    {"name": "Rough request", "role": None,
+     "adds": "nothing yet — just an ask",
+     "why": "It has no definition of done, no output shape, and no way to check the result. The model guesses what you meant and stops whenever it feels finished.",
+     "text": "Research this topic and tell me what you find."},
+    {"name": "Structured", "role": "goal",
+     "adds": "goal · scope · output format",
+     "why": "Now the task, the boundary, and the deliverable are explicit — the model isn't guessing the shape of a good answer.",
+     "text": "Research [[<TOPIC>, focused on <ANGLE>]]. [[Return a 5-point summary; each point is one sentence with a source link.]]"},
+    {"name": "Verified", "role": "verifier",
+     "adds": "source rules · an independent check",
+     "why": "A claim only counts if an independent source backs it. This is the difference between a confident-sounding answer and a checked one.",
+     "text": "Research <TOPIC>, focused on <ANGLE>. Return a 5-point summary; each point is one sentence with a source link. [[Every point must be corroborated by an independent source; if you can't corroborate one, drop it or mark it UNVERIFIED. Prefer primary sources.]]"},
+    {"name": "Looping", "role": "action",
+     "adds": "frozen goal · per-turn loop · saturation stop",
+     "why": "One search is rarely enough. The loop keeps closing gaps and — crucially — stops on evidence saturation, not on a fixed count or on the model getting tired.",
+     "text": "[[Goal (frozen): a 5-point, fully-sourced summary of <TOPIC>/<ANGLE> where no point is UNVERIFIED.]] [[Each turn: search → read → extract candidate points → verify each against an independent source → note gaps → search again for the gaps.]] [[Stop when two consecutive searches surface no new corroborated point (saturation).]]"},
+    {"name": "Production", "role": "stop",
+     "adds": "compact state · 4-arm stop · budget · recovery · logging",
+     "why": "The multi-armed stop means it can never run forever or grind silently: it halts on success, budget, no-progress, OR a block — and hands off cleanly when it needs a human.",
+     "text": "Goal (frozen): a 5-point, fully-sourced summary of <TOPIC>/<ANGLE>, no point UNVERIFIED, verified by an independent corroboration check. Each turn: assess the point ledger → ONE search or ONE verification → update the ledger → decide. [[Carry forward: the point ledger (point | status | source), searches tried, budget left.]] [[Stop on the FIRST of: SUCCESS — 5 corroborated points, none UNVERIFIED; BUDGET — <MAX_SEARCHES> searches; NO-PROGRESS — no new corroborated point for 3 turns; BLOCKED — a required source is paywalled/unavailable.]] [[Log each turn's ledger; on BLOCKED or NO-PROGRESS, hand off with what's been tried.]]"},
+]
+
+
+def _evolution_text_html(text: str) -> str:
+    # escape, then turn [[...]] markers into highlighted <ins> spans
+    out, i = [], 0
+    for m in re.finditer(r"\[\[(.+?)\]\]", text, re.S):
+        out.append(html.escape(text[i:m.start()]))
+        out.append(f'<ins>{html.escape(m.group(1))}</ins>')
+        i = m.end()
+    out.append(html.escape(text[i:]))
+    return "".join(out)
+
+
+def render_evolution() -> str:
+    dots, steps = "", ""
+    for i, s in enumerate(EVOLUTION):
+        dots += (f'<button class="ev-dot" data-i="{i}" aria-label="Stage {i+1}: {html.escape(s["name"])}">'
+                 f'<span class="ev-dot-n">{i+1}</span><span class="ev-dot-name">{html.escape(s["name"])}</span></button>')
+        steps += (
+            f'<article class="ev-stage" data-i="{i}"{" data-active" if i == 0 else ""}>'
+            f'<div class="ev-head"><span class="ev-num">Stage {i+1}</span>'
+            f'<h2>{html.escape(s["name"])}</h2>'
+            f'<span class="ev-adds">adds: {html.escape(s["adds"])}</span></div>'
+            f'<pre id="evpre{i}" class="ev-text">{_evolution_text_html(s["text"])}</pre>'
+            f'<div class="ev-toolbar"><button class="copy-btn" data-copy-target="evpre{i}">Copy this version</button>'
+            f'<span class="ev-hint muted">highlighted = new at this stage</span></div>'
+            f'<p class="ev-why">{html.escape(s["why"])}</p>'
+            f'</article>'
+        )
+    body = f"""
+<section class="wrap evolution-page">
+  <h1 class="section-h">Watch a prompt evolve</h1>
+  <p class="section-sub">The same instruction, gaining one layer of loop anatomy at a time — from a vague
+  ask to a production loop that can't run forever or lie about being done. Step through the stages; the
+  <ins>highlighted</ins> text is what's new at each one.</p>
+  <div class="ev-dots" role="tablist">{dots}</div>
+  <div class="ev-stages">{steps}</div>
+  <p class="muted" style="margin-top:22px">Every prompt in the <a href="library.html">library</a> lives at
+  the last stage. See the parts named on the <a href="anatomy.html">anatomy page</a>.</p>
+</section>
+"""
+    return page("Evolve · prompt-os", body, "",
+                desc="Watch one instruction evolve from a rough request into a production agent loop, "
+                     "gaining goal, verifier, loop, and a multi-armed stop one stage at a time.")
 
 
 # ---- Automation section -----------------------------------------------------
@@ -2124,6 +2197,32 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .rel-list,.fail-list{max-width:80ch;color:var(--ink-soft)}
 .rel-list li,.fail-list li{margin:7px 0}
 
+/* prompt evolution */
+.evolution-page{padding-top:28px}
+.ev-dots{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 24px}
+.ev-dot{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line-strong);
+  border-radius:24px;padding:6px 15px 6px 7px;cursor:pointer;font-family:inherit;color:var(--ink-soft)}
+.ev-dot:hover{border-color:var(--accent)}
+.ev-dot.active{border-color:var(--accent);color:var(--ink);box-shadow:var(--shadow)}
+.ev-dot:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ev-dot-n{width:24px;height:24px;border-radius:50%;background:var(--line);display:grid;place-items:center;
+  font-size:.78rem;font-weight:700;font-family:var(--mono);flex:none}
+.ev-dot.active .ev-dot-n{background:var(--accent);color:#fff}
+.ev-dot-name{font-size:.85rem;font-weight:600}
+.js .ev-stage:not([data-active]){display:none}
+.ev-stage{animation:fade .25s ease}
+.ev-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.ev-num{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--warm-ink);font-weight:700}
+.ev-head h2{margin:0;font-size:1.4rem;letter-spacing:-.01em}
+.ev-adds{font-size:.85rem;color:var(--muted);font-family:var(--mono)}
+.ev-text{background:var(--code-bg);color:var(--code-ink);border:1px solid var(--line);border-radius:var(--radius);
+  padding:20px;font-family:var(--mono);font-size:.9rem;line-height:1.75;white-space:pre-wrap;margin:0 0 12px;overflow-x:auto}
+.ev-text ins{background:color-mix(in srgb,var(--goal) 20%,transparent);text-decoration:none;border-radius:3px;
+  padding:1px 3px;box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--goal) 45%,transparent)}
+.ev-toolbar{display:flex;align-items:center;gap:14px;margin-bottom:10px;flex-wrap:wrap}
+.ev-hint{font-size:.8rem}
+.ev-why{color:var(--ink-soft);max-width:76ch;line-height:1.6}
+
 /* constellation graph */
 .graph-page{padding-top:28px}
 .graph-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
@@ -2609,6 +2708,27 @@ if (results) {
   })();
 })();
 
+/* prompt evolution stepper */
+(function () {
+  'use strict';
+  var page = document.querySelector('.evolution-page'); if (!page) return;
+  var dots = [].slice.call(page.querySelectorAll('.ev-dot'));
+  var stages = [].slice.call(page.querySelectorAll('.ev-stage'));
+  if (!dots.length) return;
+  function show(i) {
+    stages.forEach(function (s) { if (+s.getAttribute('data-i') === i) s.setAttribute('data-active', ''); else s.removeAttribute('data-active'); });
+    dots.forEach(function (d) { d.classList.toggle('active', +d.getAttribute('data-i') === i); });
+  }
+  dots.forEach(function (d) { d.addEventListener('click', function () { show(+d.getAttribute('data-i')); }); });
+  dots[0].classList.add('active');
+  var bar = page.querySelector('.ev-dots');
+  if (bar) bar.addEventListener('keydown', function (e) {
+    var cur = dots.findIndex(function (d) { return d.classList.contains('active'); });
+    if (e.key === 'ArrowRight' && cur < dots.length - 1) { show(cur + 1); dots[cur + 1].focus(); }
+    else if (e.key === 'ArrowLeft' && cur > 0) { show(cur - 1); dots[cur - 1].focus(); }
+  });
+})();
+
 /* ===================== CONSTELLATION GRAPH ===================== */
 (function () {
   'use strict';
@@ -2718,7 +2838,7 @@ def build():
 
     # analysis (deterministic)
     stats = corpus_stats(prompts)
-    stats["generated_pages"] = 9 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
+    stats["generated_pages"] = 10 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
     related = build_related(prompts)
     # optional authored pattern reference docs (produced by the pattern workflow); seed
     # blurbs are used when absent, so the site is complete with or without them.
@@ -2758,6 +2878,7 @@ def build():
     (SITE / "glossary.html").write_text(render_glossary(), encoding="utf-8")
     (SITE / "patterns.html").write_text(render_patterns_index(stats, pat_docs), encoding="utf-8")
     (SITE / "graph.html").write_text(render_graph(prompts, related), encoding="utf-8")
+    (SITE / "evolve.html").write_text(render_evolution(), encoding="utf-8")
     (SITE / "loops.html").write_text(render_loops(prompts), encoding="utf-8")
     (SITE / "automation.html").write_text(render_automation_index(), encoding="utf-8")
     for a in AUTOMATIONS:
@@ -2772,7 +2893,7 @@ def build():
         (SITE / "pattern" / f"{key}.html").write_text(
             render_pattern_page(key, name, role, blurb, prompts, pat_docs.get(key, {})), encoding="utf-8")
 
-    total_pages = 9 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
+    total_pages = 10 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
     print(f"  parsed {n} prompts across {len(FAMILIES)} families ({starters} in starter set)")
     print(f"  wrote {total_pages} HTML pages + prompts.json + style.css + app.js -> {SITE.relative_to(ROOT)}/")
     print(f"  open: {SITE / 'index.html'}")
