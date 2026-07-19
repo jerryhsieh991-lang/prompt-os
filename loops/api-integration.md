@@ -1,6 +1,6 @@
 # API Integration
 
-`api-integration` — 1 loop prompts.
+`api-integration` — 3 loop prompts.
 
 ### 1. API Contract Verification Loop (v2 — fixed)
 
@@ -70,4 +70,119 @@ ACTION BAN
 STOP — halt on the FIRST of:
 SUCCESS (<CONTRACT_VALIDATOR> reports zero violations across every case in <CASE_SET>, including any auth-failure-probe cases scored normally) | BUDGET (<MAX_ITERATIONS> total turns used) | NO-PROGRESS (every remaining unresolved case is PARKED with nothing left to attempt and no case has newly passed for 3 consecutive turns, or a repeated identical {case, fix}, or an A->B->A oscillation) | BLOCKED (a call not targeting a declared auth-failure case unexpectedly hits 401/403; an UNREACHABLE_CASE with no way to trigger it; an unresolvable spec-vs-live conflict; or a gated paid/state-mutating case with no cleared approval for that specific case). Report case_status (including parked cases), repair_log, and turn_count at the point of halt.
 ``​`
+```
+
+### 2. Shadow-Diff API Migration Loop (v1→v2 / provider swap)
+
+- **When:** Use when moving an integration from one API version or provider to another (v1→v2 endpoints, or swapping SaaS provider A→B for the same capability) and you must PROVE the new path returns equivalent responses BEFORE cutover — not just that "the new call returns 200 and looks similar." The new path already exists alongside the old (expand phase done); this loop drives the migrate/shadow-verify phase to field-by-field equivalence across a corpus of real inputs, so the cutover (contract phase) flips the flag on proven equivalence, not hope.
+- **Loop:** assess the next unresolved field/endpoint in `<DIFF_REPORT>` (skip PARKED) -> make exactly ONE reversible change to the new-path adapter/mapping (or widen `<INPUT_CORPUS>` by one logged case) -> run the independent differ that replays BOTH paths on the SAME `<INPUT_CORPUS>` and compares field-by-field under the frozen `<EQUIVALENCE_SPEC>` -> commit if unexplained-diff count dropped with nothing regressed / revert if it rose / PARK a field after 2 distinct failed repairs -> decide continue/stop
+- **Stop:** SUCCESS: the differ reports zero UNEXPLAINED diffs across the FULL `<INPUT_CORPUS>` — every field of every case either byte-matches or matches under a declared transform in the frozen `<EQUIVALENCE_SPEC>` — clearing the cutover gate, confirmed on the whole corpus not just the last-touched case · BUDGET: `<MAX_ITERATIONS>` replay+diff turns used · NO-PROGRESS: every remaining unresolved field is PARKED and none newly reached "equivalent" for 3 turns, or the same {field, mapping-fix} pair recurs, or a mapping oscillates A→B→A · BLOCKED: a shadow call is state-mutating and can't be safely double-run with no replay/sandbox double; the new path genuinely can't reproduce an oracle field with no authority to say whether that loss is acceptable; an unadjudicable UNLISTED_DIFF (only the spec owner can amend `<EQUIVALENCE_SPEC>`) is the SOLE remaining blocker to SUCCESS; or double-calling a metered provider has no cleared cost gate
+- **Model:** Sonnet 5 runs the mechanical loop — replay the corpus, read the differ's diff list, patch one adapter mapping, re-run — fine once `<INPUT_CORPUS>`, `<EQUIVALENCE_SPEC>`, and an independent `<DIFFER>` exist. Escalate to a stronger model to design the representative corpus (which real-world record shapes actually matter), to adjudicate an UNLISTED_DIFF that is genuinely ambiguous between benign-representation and true regression, or — if no generic differ exists — to author it as a blind pass reading only `<EQUIVALENCE_SPEC>` and the two raw responses. The differ MUST be independent because a comparator written by the same reasoning that wrote the adapter already "knows" what each field was meant to become and will silently reclassify its own mapping bugs as expected transforms — exactly the errors a pre-cutover check exists to catch.
+
+```text
+GOAL (frozen — do not redefine mid-loop)
+Prove that <NEW_PATH> (the v2/replacement call, e.g. "GET /v2/customers/{id}" or provider-B's SDK method) is response-equivalent to <OLD_PATH> (the v1/incumbent call it replaces) for EVERY case in <INPUT_CORPUS>, so the cutover flag can flip on evidence rather than optimism. "Equivalent" means: for each response field, the new path's value either byte-matches the old path's, or matches it under a declared transform in <EQUIVALENCE_SPEC> (e.g. epoch->ISO-8601, enum rename, re-nesting, unit change). A new call returning 200 with a body that "looks similar" is NEVER sufficient — a case is equivalent only when the INDEPENDENT differ reports zero unexplained diffs for it, on a replay separate from the adapter code that shaped the new call. The corpus only ever GROWS deliberately (each addition logged) and is never shrunk mid-run to dodge a hard case.
+
+Freeze before turn 1:
+- <OLD_PATH> and <NEW_PATH> — the incumbent (oracle) and replacement calls, with auth for each. <OLD_PATH> is the frozen oracle; its responses are ground truth, never edited to match the new path.
+- <INPUT_CORPUS> — the representative set of real request inputs to replay through BOTH paths: happy path PLUS empty results, pagination boundaries, error responses (404/422), large/deeply-nested payloads, null-vs-omitted optional fields, unicode/locale oddities, and any known odd-shaped real records. If an input isn't in the corpus it isn't verified; widen the corpus deliberately (logged), never quietly mid-run to dodge a hard case.
+- <EQUIVALENCE_SPEC> — the frozen registry of (a) normalization/ignore rules for legitimately non-deterministic fields (server timestamps, request IDs, opaque cursors, unordered collections, float precision) and (b) allowed representational transforms (field renames, type/format changes, re-nesting). This is the oracle's rulebook — do NOT add ignore/transform rules mid-run to make a real diff vanish; an unanticipated diff is a spec-amendment decision for the owner, not a loop action.
+- <DIFFER> — an independent tool that replays each corpus input through both paths and compares the two ACTUAL observed response trees field-by-field under <EQUIVALENCE_SPEC>. It must not share the adapter's field-mapping logic. Prefer a generic structural JSON differ configured ONLY by <EQUIVALENCE_SPEC>; if one must be built in-session, author it in a separate sub-task that reads only <EQUIVALENCE_SPEC> and the two raw responses, with NO visibility into how the adapter maps fields — so a mapping bug can't be waved through as an "expected diff" by a differ that already knows the adapter's intent.
+- <MAX_ITERATIONS>.
+- Whether any corpus case is state-mutating (POST/PUT/DELETE) or hits a metered/paid provider on double-call — if so, name how it is safely shadowed (read-replica, recorded-replay double, sandbox tenant, dry-run) and its cost/approval gate now, per case.
+
+INDEPENDENT VERIFIER
+The differ decides "equivalent," and it is structurally separate from the adapter that produces <NEW_PATH> responses: it replays a corpus input through both the frozen oracle (<OLD_PATH>) and the new path, then compares the two ACTUAL observed response objects (the real bytes each path returned, not a self-report) field-by-field against <EQUIVALENCE_SPEC>, emitting {case, field_path, old_value, new_value, class}. It never asks the adapter "did you map this right?" — the adapter's belief that a field is handled is exactly the blind spot under test. It cannot rubber-stamp itself because pass/fail is a mechanical tree-diff over two independently-fetched responses under a frozen rulebook, and because its authorship is walled off from the mapping reasoning so a shared misreading can't make the call set and the differ agree for the wrong reason. Never edit <OLD_PATH>'s output or the frozen <EQUIVALENCE_SPEC> mid-run to force a match.
+
+PER-TURN SHAPE
+1. ASSESS — From <DIFF_REPORT>, pick the next unresolved field/endpoint with unexplained diffs (highest-frequency diff class first), SKIPPING any PARKED field. Only return to a PARKED field once every other unresolved field is equivalent, blocked, or itself parked. Confirm the case isn't a state-mutating/metered shadow lacking a cleared gate.
+2. ONE ACTION — Make exactly ONE reversible change: adjust the new-path adapter's mapping for ONE field/endpoint, OR add ONE missing input case to <INPUT_CORPUS> (a logged coverage widening), OR wire one already-declared <EQUIVALENCE_SPEC> transform not yet applied. Never batch several field fixes; never touch the oracle or the frozen spec.
+3. VERIFY — Re-run <DIFFER> over the FULL corpus (not just the touched case): every field must byte-match or match under a declared transform. Record remaining unexplained diffs as {case, field_path, old, new, class}.
+4. DECIDE —
+   - Zero unexplained diffs for this field across the whole corpus: mark it equivalent, move to the next.
+   - Diffs remain: classify each — MAPPING_BUG (adapter emits the wrong value/shape -> fix the adapter), UNLISTED_DIFF (a representational difference plausibly benign but NOT in <EQUIVALENCE_SPEC> -> do NOT self-approve; PARK the field and flag it for the spec owner — do not halt the whole loop while other fields are still workable), REGRESSION (new path returns genuinely wrong/worse/missing data the old path had -> a real finding, not a mapping issue). Apply exactly one adapter repair per MAPPING_BUG; log it; never repeat an identical {field, fix}. On a field's 2nd distinct failed repair, PARK(attempts=2, last_diff) and move on.
+   - Total diff count exploded / a previously-equivalent field regressed -> git reset this action, try a materially different mapping next turn.
+   - A state-mutating case can't be safely double-run (no replay/sandbox double) -> STOP: BLOCKED.
+   - An UNLISTED_DIFF only the spec owner can rule benign-or-regression, AND it is the SOLE remaining blocker to SUCCESS (every other field equivalent, blocked, or parked with nothing workable left) -> STOP: BLOCKED (name the field). While workable fields remain, an unlisted diff only parks.
+   - turn_count hits <MAX_ITERATIONS> -> STOP: BUDGET.
+   - Every remaining unresolved field PARKED and none newly equivalent for 3 turns, or a repeated {field, fix}, or an A->B->A mapping oscillation -> STOP: NO-PROGRESS.
+   - Otherwise continue.
+
+CARRY-FORWARD STATE (compact)
+- field_status: {field_or_endpoint: equivalent | diffing(last_diff, class) | parked(attempts, last_diff) | blocked} across <DIFF_REPORT>
+- unexplained_diff_count and parked_count — NO-PROGRESS fires only when parked_count == unresolved_count and nothing newly equivalent for 3 turns
+- corpus_coverage: which <INPUT_CORPUS> cases are still un-replayed
+- repair_log: last 5 {field, class, adapter_fix} — bans identical repeats and A->B->A
+- turn_count: <int> / <MAX_ITERATIONS>
+- shadow_gate_status: {mutating_or_metered_case: cleared | not-cleared}
+
+ACTION BAN
+- Never mark a field equivalent because the new response "looks similar" — only <DIFFER>'s zero-unexplained-diff result counts.
+- Never add a normalization/ignore or transform rule to <EQUIVALENCE_SPEC> mid-run to make a diff disappear — the spec is the frozen oracle rulebook; an unanticipated diff is escalated, not silently absorbed.
+- Never edit <OLD_PATH>'s behavior or a golden-recorded oracle response to match the new path.
+- Never halt the whole loop on the first routine UNLISTED_DIFF while other fields are still workable — park it; BLOCKED is only for an unadjudicable unlisted diff that is the sole remaining blocker.
+- Never flip the cutover flag / route real traffic to <NEW_PATH> before the differ is clean across the FULL corpus and any cutover gate is cleared.
+- Never double-run a state-mutating or metered shadow call without a safe double and a cleared gate for that case.
+- Never repeat a byte-identical mapping fix after it failed, or oscillate a mapping A->B->A without new rationale.
+- Never verify on the happy-path corpus subset alone and declare the migration safe — every corpus case must be equivalent.
+
+STOP — halt on the FIRST of:
+SUCCESS (<DIFFER> reports zero unexplained diffs across the full <INPUT_CORPUS>, clearing the cutover gate) | BUDGET (<MAX_ITERATIONS> replay+diff turns used) | NO-PROGRESS (every remaining unresolved field PARKED with nothing newly equivalent for 3 turns, or a repeated {field, fix}, or an A->B->A mapping oscillation) | BLOCKED (a state-mutating shadow with no safe double; the new path can't reproduce an oracle field with no authority on whether the loss is acceptable; an unadjudicable unlisted diff that is the sole remaining blocker to SUCCESS; or an uncleared cost gate on a metered double-call). Report field_status (incl. parked), repair_log, corpus_coverage, and turn_count at halt.
+```
+
+### 3. Fault-Injection Resilience Hardening Loop (429/5xx/timeout + idempotency)
+
+- **When:** Use when hardening an integration against transient upstream failure — 429 rate-limits, 500/502/503, connection/read timeouts, resets, duplicate delivery — so it retries with correct backoff (exponential + jitter, honoring Retry-After, capped) AND never double-applies a non-idempotent write on retry. Verified by a DETERMINISTIC fault-injection harness that scripts those failures on a seeded schedule and asserts the client's observed wire-level behavior — not by deploying and hoping prod misbehaves.
+- **Loop:** assess the next failing scenario in the frozen `<FAULT_SCRIPT>` (skip PARKED) -> make exactly ONE reversible resilience change to the client (backoff, jitter, cap, Retry-After, status classification, idempotency-key propagation, circuit-breaker) -> re-run the WHOLE seeded fault script through the independent harness and read its behavior assertions -> commit if more scenarios pass with none regressed / revert if any regressed / PARK a scenario after 2 distinct failed repairs -> decide continue/stop
+- **Stop:** SUCCESS: the harness reports every scenario in `<FAULT_SCRIPT>` passing — correct backoff schedule with jitter and a retry cap, Retry-After honored, retryable-vs-terminal statuses classified right, and the timeout-but-server-succeeded scenario shows EXACTLY-ONCE server-side effect — on the full script, not the last-touched scenario · BUDGET: `<MAX_ITERATIONS>` inject+observe turns used · NO-PROGRESS: every remaining failing scenario is PARKED and none newly passed for 3 turns, or the same {scenario, fix} recurs, or a policy value oscillates A→B→A · BLOCKED: the upstream offers no idempotency mechanism for a genuinely non-idempotent write so exactly-once can't be met; the harness has no injectable transport/proxy seam to intercept calls so faults can't be injected deterministically; or the contract is silent/contradictory on whether a status is retryable with no authority to decide
+- **Model:** Sonnet 5 handles the mechanical hardening loop (add backoff, wire an idempotency key, adjust the retryable-status set, re-run the fault script) once the harness and a frozen `<FAULT_SCRIPT>` exist. Escalate to a stronger model to design the fault script (which failure interleavings and the timeout-after-partial-success case actually matter), to reason through the exactly-once/idempotency-key semantics, or — if none exists — to author the harness as an independent proxy. The harness MUST be independent because retry code cannot grade its own resilience: it will "assert" that it would have backed off and de-duplicated correctly. Only an external proxy recording the actual request timeline (attempt count, inter-attempt delays, idempotency keys, final server-side effect count) proves the behavior happened rather than merely being intended.
+
+```text
+GOAL (frozen — do not redefine mid-loop)
+Make <INTEGRATION> (the client calling <UPSTREAM>, e.g. a payment/create call) survive transient upstream failure per <RESILIENCE_POLICY>, verified by the frozen <FAULT_SCRIPT> running through an independent fault-injection harness. "Survive" means, for every scripted scenario: retry ONLY retryable failures (429, 408, 502/503/504, connection/read timeout — NOT 400/401/403/404/422), back off exponentially with jitter, honor an explicit Retry-After, cap attempts at <MAX_ATTEMPTS> then fail cleanly with a surfaced error, AND — for non-idempotent writes — carry a stable idempotency key across retries so a retried request the server already applied results in EXACTLY ONE effect. "It didn't throw in a manual test" is NEVER sufficient — a scenario is done only when the harness's wire-level assertions pass on a run separate from the client's own retry code.
+
+Freeze before turn 1:
+- <INTEGRATION> and <UPSTREAM> — the client under hardening and the endpoint(s) it calls, flagging per operation whether it is idempotent (GET/PUT/DELETE-by-key) or non-idempotent (POST/create/charge).
+- <RESILIENCE_POLICY> — the target behavior, frozen: the retryable status/error set, backoff base and multiplier, jitter kind, <MAX_ATTEMPTS> cap, max total elapsed, Retry-After handling, and the idempotency-key scheme (header name, key derivation, stability across retries of one logical operation, distinctness across distinct operations).
+- <FAULT_SCRIPT> — the deterministic, SEEDED sequence of faults per scenario, covering at least: sustained 429 with Retry-After, 429 without it, 503-then-success, hard connection timeout, slow read timeout, connection reset mid-body, a non-retryable 400/422 (must NOT be retried), a retry-storm probe (assert this single client's attempts are capped and its inter-attempt delays are spaced and jittered — a client-side guard against contributing to a thundering herd), and the critical timeout-but-server-succeeded scenario (the first write applies server-side but the response is lost -> assert the retry reuses the idempotency key and the mock's applied-effect counter ends at exactly 1). This script is the frozen verifier input — do NOT weaken a scenario or loosen an assertion mid-run to make the client pass.
+- <HARNESS> — an independent fault-injection proxy/mock sitting between <INTEGRATION> and <UPSTREAM> that injects <FAULT_SCRIPT> deterministically and records the real request timeline (per-attempt timestamps, headers incl. idempotency key, attempt count, and a server-side applied-effect counter), then asserts observed behavior against <RESILIENCE_POLICY>. It must intercept the actual transport, not be the client's own retry wrapper self-reporting. The clock is injected/virtual so backoff delays are asserted from recorded scheduled intervals rather than by sleeping real minutes — deterministic and fast. If no injectable transport seam exists, say so now (BLOCKED-eligible).
+- <MAX_ITERATIONS>.
+
+INDEPENDENT VERIFIER
+The harness decides "resilient," and it lives OUTSIDE the client's retry logic: it is a proxy/mock that deterministically replays the seeded <FAULT_SCRIPT> and judges pass/fail purely from the recorded wire-level request timeline — how many attempts arrived, the delay and jitter between them, whether Retry-After was obeyed, whether a non-retryable status was (wrongly) retried, whether every retry of one logical write carried the same idempotency key, and whether the server-side applied-effect counter is exactly 1 after a timeout-then-retry. It cannot rubber-stamp itself because it never reads the client's intentions or "I retried correctly" self-report — only the externally-observed sequence of requests and the final effect count. Note the scope this proves: that the CLIENT retries and de-duplicates correctly against a mock that honors idempotency keys — whether the real <UPSTREAM> honors the key is a separate assumption, guarded by the BLOCKED arm below. The fault script and its assertions are frozen: fix the client, never the script.
+
+PER-TURN SHAPE
+1. ASSESS — From the harness's last run, pick the next failing scenario (prioritize correctness-critical ones — unsafe-retry/double-effect and retrying-a-terminal-status — before cosmetic backoff-timing), SKIPPING any PARKED scenario. Return to a PARKED scenario only once every other failing scenario is passing, blocked, or parked.
+2. ONE ACTION — Make exactly ONE reversible client change: e.g. add exponential backoff, add jitter, add/adjust the <MAX_ATTEMPTS> cap, honor Retry-After, correct the retryable-status set, propagate a stable idempotency key, add a circuit-breaker. One behavior per turn so a regression is attributable; never batch.
+3. VERIFY — Re-run the ENTIRE <FAULT_SCRIPT> through <HARNESS> (not only the scenario you targeted). Read its assertion results per scenario: {scenario, assertion, expected, observed}. The double-effect and terminal-status assertions must pass, not just the timing ones.
+4. DECIDE —
+   - More scenarios pass and none regressed: commit, move on.
+   - A previously-passing scenario now fails: git reset this change, try a materially different approach next turn (a retry must change approach, not repeat the same edit).
+   - A scenario still fails: classify — MISSING_BACKOFF / NO_JITTER / NO_CAP (retry storm) / IGNORED_RETRY_AFTER / MISCLASSIFIED_STATUS (retrying a terminal 4xx, or not retrying a 503) / UNSAFE_RETRY (non-idempotent write retried without a stable idempotency key -> double effect). Apply one fix; log it; never repeat an identical {scenario, fix}. On a scenario's 2nd distinct failed repair, PARK(attempts=2, last_assertion) and move on.
+   - UNSAFE_RETRY unfixable because <UPSTREAM> exposes no idempotency mechanism for a genuinely non-idempotent write -> STOP: BLOCKED (a real architectural finding).
+   - The harness has no seam to intercept the client's transport (faults can't be injected deterministically) -> STOP: BLOCKED.
+   - A status's retryability is genuinely undefined/contradictory in the contract with no authority to decide -> STOP: BLOCKED.
+   - turn_count hits <MAX_ITERATIONS> -> STOP: BUDGET.
+   - Every remaining failing scenario PARKED and none newly passed for 3 turns, or a repeated {scenario, fix}, or an A->B->A policy oscillation -> STOP: NO-PROGRESS.
+   - Otherwise continue.
+
+CARRY-FORWARD STATE (compact)
+- scenario_status: {scenario: passing | failing(last_assertion, class) | parked(attempts, last_assertion) | blocked} across <FAULT_SCRIPT>
+- failing_count and parked_count — NO-PROGRESS fires only when parked_count == failing_count and none newly passed for 3 turns
+- repair_log: last 5 {scenario, class, client_fix} — bans identical repeats and A->B->A
+- current_best: the last client state where the most scenarios passed with no double-effect (the commit baseline to revert to)
+- turn_count: <int> / <MAX_ITERATIONS>
+
+ACTION BAN
+- Never verify resilience by pointing at live <UPSTREAM> and waiting for real failures — only the deterministic seeded <FAULT_SCRIPT> through <HARNESS> counts; real prod misbehavior is neither reproducible nor a verifier.
+- Never retry a non-idempotent write without a stable idempotency key — the timeout-but-server-succeeded scenario's exactly-once assertion must pass, never be skipped.
+- Never make retries uncapped/infinite, or fixed-interval without jitter (thundering herd).
+- Never retry a terminal status (400/401/403/404/422) — retrying what can't succeed is a defect, not resilience.
+- Never weaken a scenario or loosen an assertion in <FAULT_SCRIPT> to make the client pass — the script is the frozen verifier; fix the client.
+- Never assert correctness from the client's own "I retried N times" self-report — only the harness's externally-recorded request timeline and effect counter.
+- Never repeat a byte-identical fix after it failed, or oscillate a policy value A->B->A without new rationale.
+- Never declare done on the backoff-timing scenarios while the idempotency/double-effect scenario is unproven.
+
+STOP — halt on the FIRST of:
+SUCCESS (<HARNESS> reports every <FAULT_SCRIPT> scenario passing — correct backoff+jitter+cap, Retry-After honored, retryable-vs-terminal classified right, and exactly-once server-side effect on the timeout-then-retry — across the full script) | BUDGET (<MAX_ITERATIONS> inject+observe turns used) | NO-PROGRESS (every remaining failing scenario PARKED with none newly passed for 3 turns, or a repeated {scenario, fix}, or an A->B->A policy oscillation) | BLOCKED (no upstream idempotency mechanism for a non-idempotent write; no transport seam to inject faults deterministically; or an undecidable status-retryability conflict). Report scenario_status (incl. parked), repair_log, and turn_count at halt.
 ```

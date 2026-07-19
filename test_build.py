@@ -13,9 +13,9 @@ from urllib.parse import urlsplit
 import build_site
 
 
-EXPECTED_PROMPTS = 154
+EXPECTED_PROMPTS = 158
 EXPECTED_FAMILIES = 26
-EXPECTED_HTML_PAGES = 220  # 13 top-level pages + 154 prompt + 26 family + 15 pattern + 12 automation
+EXPECTED_HTML_PAGES = 224  # 13 top-level pages + 158 prompt + 26 family + 15 pattern + 12 automation
 ANATOMY_SHORT_ALLOWLIST = {"orchestration-harness-8"}
 
 
