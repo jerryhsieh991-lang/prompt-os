@@ -1250,6 +1250,7 @@ def render_home(prompts: list[dict], principles: dict, stats: dict) -> str:
     body = f"""
 <section class="hero hero-dark">
   <div class="hero-stars" aria-hidden="true"></div>
+  <div class="hero-aurora" aria-hidden="true"></div>
   <div class="wrap hero-grid">
     <div class="hero-copy">
       <p class="kicker">prompt-os · loop-prompt library</p>
@@ -2951,10 +2952,14 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .learn-cta{margin:16px 0 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 
 /* ---- Hero: dark "deep-space" 3D band (body stays warm) ---- */
-.hero-dark{--hero-fg:#eef1f8;--hero-dim:#a6b0cb;
-  background:radial-gradient(125% 100% at 76% 16%,#16214d 0%,#0d1430 46%,#070a17 100%);
-  color:var(--hero-fg);position:relative;overflow:hidden;padding:88px 0 66px;border-bottom:1px solid rgba(255,255,255,.09)}
-.hero-dark .wrap{position:relative;z-index:2}
+.hero-dark{--hero-fg:#f6f4ec;--hero-dim:#bdc4e0;
+  background:radial-gradient(125% 120% at 50% 22%,#16215a 0%,#1b122b 45%,#0a070e 100%);
+  color:var(--hero-fg);position:relative;overflow:hidden;padding:88px 0 66px;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 -34px 46px -34px rgba(196,98,45,.28)}   /* warm seam glow -> ties to the cream body */
+.hero-dark .wrap{position:relative;z-index:3}
+.hero-aurora{position:absolute;inset:0;z-index:1;pointer-events:none;mix-blend-mode:screen;opacity:.9;
+  background:linear-gradient(160deg,rgba(58,76,224,.16) 0%,rgba(158,140,255,.13) 45%,rgba(10,7,14,0) 78%)}
 .hero-stars{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.7;
   background-image:
     radial-gradient(1.4px 1.4px at 12% 24%,rgba(255,255,255,.55),transparent),
@@ -3907,10 +3912,13 @@ var PROMPTOS = (function () {
 })();
 
 /* ===================== HERO 3D LOOP (raw WebGL, zero deps) =====================
-   A rotating 3D ring of glowing nodes (the loop stages) with a comet pulse
-   orbiting it. Additive glow over the CSS deep-space gradient. Falls back to the
-   static SVG ring for no-WebGL / reduced-motion / no-JS. Pauses when offscreen
-   or the tab is hidden. */
+   A glowing 3D loop ring that ASSEMBLES from scattered particles on load
+   (formation), then rotates slowly with a comet pulse orbiting it, an ambient
+   dust field (cool + violet + a few warm-ember motes), per-node "breathing", and
+   a cursor-parallax tilt. Multi-layer additive glow over the CSS deep-space
+   gradient. Falls back to the static SVG ring for no-WebGL / reduced-motion /
+   no-JS. Pauses when offscreen or the tab is hidden. Palette + interaction values
+   are from the design research (easeOutCubic formation, lerp 0.07 cursor). */
 (function () {
   var canvas = document.getElementById('heroGL'); if (!canvas) return;
   var fallback = document.getElementById('heroFallback'), viz = document.getElementById('heroViz');
@@ -3920,14 +3928,23 @@ var PROMPTOS = (function () {
              || canvas.getContext('experimental-webgl', {alpha:true, premultipliedAlpha:false}); } catch(e){}
   if (!gl) return;  // no WebGL -> static SVG stays
 
+  // Unified point shader: formation (start->target eased), drift (dust), breathing
+  // (nodes), perspective size, depth brightness. Fragment = hot core + soft halo.
   var VERT =
-    'attribute vec3 a_pos;uniform mat4 u_mvp;uniform float u_size;varying float v_b;' +
-    'void main(){vec4 p=u_mvp*vec4(a_pos,1.0);gl_Position=p;' +
-    'float z=p.z/p.w;v_b=clamp(0.9-0.5*z,0.28,1.35);gl_PointSize=u_size/max(p.w,0.1);}';
+    'attribute vec3 a_target;attribute vec3 a_start;attribute float a_seed;' +
+    'uniform mat4 u_mvp;uniform float u_size,u_form,u_time,u_drift,u_breathe;varying float v_b;' +
+    'void main(){' +
+    'float p=clamp((u_form - a_seed*0.45)/0.55,0.0,1.0);p=1.0-pow(1.0-p,3.0);' +
+    'vec3 pos=mix(a_start,a_target,p);' +
+    'pos+=u_drift*vec3(sin(u_time*0.3+a_seed*6.283),cos(u_time*0.24+a_seed*9.4),sin(u_time*0.21+a_seed*4.1));' +
+    'vec4 mp=u_mvp*vec4(pos,1.0);gl_Position=mp;float z=mp.z/mp.w;' +
+    'float br=1.0+u_breathe*sin(u_time*1.7+a_seed*38.0);' +
+    'v_b=clamp(0.85-0.5*z,0.28,1.4)*br;gl_PointSize=(u_size*br)/max(mp.w,0.1);}';
   var FRAG =
     'precision mediump float;uniform vec3 u_color;uniform float u_int;varying float v_b;' +
-    'void main(){vec2 d=gl_PointCoord-vec2(0.5);float r=length(d)*2.0;' +
-    'float a=smoothstep(1.0,0.0,r);a=pow(a,2.2);gl_FragColor=vec4(u_color*u_int*v_b,a);}';
+    'void main(){vec2 d=gl_PointCoord-vec2(0.5);float r=length(d)*2.0;float e=clamp(1.0-r,0.0,1.0);' +
+    'float core=pow(e,6.0);float halo=pow(e,1.6)*0.42;' +
+    'gl_FragColor=vec4(u_color*u_int*v_b, core+halo);}';
 
   function sh(type, src){ var s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
     if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) return null; return s; }
@@ -3937,26 +3954,44 @@ var PROMPTOS = (function () {
   var prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
   if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ restore(); return; }
   gl.useProgram(prog);
-  var A_pos=gl.getAttribLocation(prog,'a_pos');
+  var A_t=gl.getAttribLocation(prog,'a_target'), A_s=gl.getAttribLocation(prog,'a_start'), A_se=gl.getAttribLocation(prog,'a_seed');
   var U_mvp=gl.getUniformLocation(prog,'u_mvp'), U_size=gl.getUniformLocation(prog,'u_size'),
-      U_color=gl.getUniformLocation(prog,'u_color'), U_int=gl.getUniformLocation(prog,'u_int');
+      U_color=gl.getUniformLocation(prog,'u_color'), U_int=gl.getUniformLocation(prog,'u_int'),
+      U_form=gl.getUniformLocation(prog,'u_form'), U_time=gl.getUniformLocation(prog,'u_time'),
+      U_drift=gl.getUniformLocation(prog,'u_drift'), U_breathe=gl.getUniformLocation(prog,'u_breathe');
 
-  // success: swap SVG fallback for the live canvas
-  canvas.hidden=false; if(fallback) fallback.style.display='none';
+  canvas.hidden=false; if(fallback) fallback.style.display='none';   // swap SVG for the live canvas
 
-  // ---- geometry (local space; ring in the X-Z plane, radius R) ----
-  var R=1.5, NODES=6, RINGPTS=72, STARS=130;
+  // ---- palette (0-1 rgb; cool cyan->violet ramp + warm ember accent) ----
+  var C_RING=[0.40,0.72,1.0], C_NODE=[0.58,0.84,1.0], C_COOL=[0.20,0.55,0.62],
+      C_VIO=[0.62,0.55,1.0], C_TAIL=[0.78,0.94,1.0], C_EMBER=[0.96,0.62,0.36], C_HOT=[1.0,0.95,0.88];
+
+  var seed=987654321; function rnd(){ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }
+  var R=1.5, NODES=6, RINGPTS=72;
+  var isMobile = Math.min(window.innerWidth, window.innerHeight) < 680 || /Mobi|Android/i.test(navigator.userAgent||'');
+  var DUST = isMobile ? 170 : 360;
   function ringPos(t){ var a=t*Math.PI*2; return [Math.cos(a)*R, 0, Math.sin(a)*R]; }
-  var ringArr=[]; for(var i=0;i<RINGPTS;i++){ var p=ringPos(i/RINGPTS); ringArr.push(p[0],p[1],p[2]); }
-  var nodeArr=[]; for(i=0;i<NODES;i++){ var q=ringPos(i/NODES); nodeArr.push(q[0],q[1],q[2]); }
-  var starArr=[]; var seed=1234567;
-  function rnd(){ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }
-  for(i=0;i<STARS;i++){ starArr.push((rnd()*2-1)*4.2,(rnd()*2-1)*3.0,(rnd()*2-1)*2.5-1.2); }
+  function scatter(sp){ return [(rnd()*2-1)*sp, (rnd()*2-1)*sp*0.8, (rnd()*2-1)*sp*0.8 - 1.0]; }
 
-  function buf(arr){ var b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
-    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW); return b; }
-  var ringBuf=buf(ringArr), nodeBuf=buf(nodeArr), starBuf=buf(starArr);
-  var pulseBuf=gl.createBuffer();   // dynamic: head + tail points, updated per frame
+  // interleaved [target(3), start(3), seed(1)] stride 28 bytes
+  function mkbuf(T,S,Se){ var n=Se.length, arr=new Float32Array(n*7), i, o;
+    for(i=0;i<n;i++){ o=i*7; arr[o]=T[i*3];arr[o+1]=T[i*3+1];arr[o+2]=T[i*3+2];
+      arr[o+3]=S[i*3];arr[o+4]=S[i*3+1];arr[o+5]=S[i*3+2]; arr[o+6]=Se[i]; }
+    var b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,arr,gl.STATIC_DRAW);
+    return {b:b, n:n}; }
+
+  var i, ringT=[],ringS=[],ringSe=[], nodeT=[],nodeS=[],nodeSe=[];
+  for(i=0;i<RINGPTS;i++){ var p=ringPos(i/RINGPTS); ringT.push(p[0],p[1],p[2]); var s=scatter(5.5); ringS.push(s[0],s[1],s[2]); ringSe.push(rnd()); }
+  for(i=0;i<NODES;i++){ var q=ringPos(i/NODES); nodeT.push(q[0],q[1],q[2]); var s2=scatter(5.5); nodeS.push(s2[0],s2[1],s2[2]); nodeSe.push(rnd()); }
+  // dust partitioned by colour class: ~4% ember, ~20% violet, rest cool
+  var coT=[],coS=[],coSe=[], viT=[],viS=[],viSe=[], emT=[],emS=[],emSe=[];
+  for(i=0;i<DUST;i++){ var tx=(rnd()*2-1)*3.6, ty=(rnd()*2-1)*2.5, tz=(rnd()*2-1)*2.3-0.5; var st=scatter(6.5); var se=rnd(); var cl=rnd();
+    if(cl<0.04){ emT.push(tx,ty,tz); emS.push(st[0],st[1],st[2]); emSe.push(se); }
+    else if(cl<0.24){ viT.push(tx,ty,tz); viS.push(st[0],st[1],st[2]); viSe.push(se); }
+    else { coT.push(tx,ty,tz); coS.push(st[0],st[1],st[2]); coSe.push(se); } }
+  var ringBuf=mkbuf(ringT,ringS,ringSe), nodeBuf=mkbuf(nodeT,nodeS,nodeSe),
+      coolBuf=mkbuf(coT,coS,coSe), vioBuf=mkbuf(viT,viS,viSe), emberBuf=mkbuf(emT,emS,emSe);
+  var cometBuf=gl.createBuffer();
 
   // ---- mat4 helpers (column-major) ----
   function mul(a,b){ var o=new Float32Array(16),c,r,k,s;
@@ -3973,47 +4008,65 @@ var PROMPTOS = (function () {
     gl.viewport(0,0,canvas.width,canvas.height); aspect=w/h; }
   resize(); window.addEventListener('resize', resize);
 
-  function drawBuf(b, count, size, col, inten, mvp){
-    gl.bindBuffer(gl.ARRAY_BUFFER,b);
-    gl.enableVertexAttribArray(A_pos); gl.vertexAttribPointer(A_pos,3,gl.FLOAT,false,0,0);
-    gl.uniformMatrix4fv(U_mvp,false,mvp); gl.uniform1f(U_size,size*DPR);
-    gl.uniform3fv(U_color,col); gl.uniform1f(U_int,inten);
-    gl.drawArrays(gl.POINTS,0,count);
-  }
+  function bind(o){ gl.bindBuffer(gl.ARRAY_BUFFER,o.b||o);
+    gl.enableVertexAttribArray(A_t); gl.vertexAttribPointer(A_t,3,gl.FLOAT,false,28,0);
+    gl.enableVertexAttribArray(A_s); gl.vertexAttribPointer(A_s,3,gl.FLOAT,false,28,12);
+    gl.enableVertexAttribArray(A_se);gl.vertexAttribPointer(A_se,1,gl.FLOAT,false,28,24); }
+  function draw(o, size, col, inten, mvp, form, time, drift, breathe, first, cnt){
+    bind(o); gl.uniformMatrix4fv(U_mvp,false,mvp); gl.uniform1f(U_size,size*DPR);
+    gl.uniform3fv(U_color,col); gl.uniform1f(U_int,inten); gl.uniform1f(U_form,form);
+    gl.uniform1f(U_time,time); gl.uniform1f(U_drift,drift||0); gl.uniform1f(U_breathe,breathe||0);
+    gl.drawArrays(gl.POINTS, first||0, cnt!==undefined?cnt:o.n); }
 
-  gl.disable(gl.DEPTH_TEST);
-  gl.enable(gl.BLEND);
-  gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE);  // additive glow
+  gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND);
+  gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE);   // additive glow
   gl.clearColor(0,0,0,0);
 
+  // cursor parallax (lerp toward target; research value k=0.07)
+  var mtx=0,mty=0, mcx=0,mcy=0;
+  window.addEventListener('mousemove', function(e){
+    mtx=(e.clientX/window.innerWidth*2-1); mty=(e.clientY/window.innerHeight*2-1); }, {passive:true});
+
+  var TAIL=14;
   var running=false, raf=0, t0=0;
-  function draw(ms){
+  function render(ms){
     if(!t0) t0=ms; var t=(ms-t0)/1000;
-    var spin=t*0.28, tilt=-1.02 + Math.sin(t*0.35)*0.06;
-    var pv=persp(0.9, aspect, 0.1, 100);
-    var scene=mul(pv, mul(trans(0,0,-4.6), mul(rotX(tilt), rotY(spin))));
-    var bg=mul(pv, mul(trans(0,0,-4.6), rotY(spin*0.15)));   // slow parallax starfield
+    var form=Math.min(t/1.9, 1.0);                          // formation over 1.9s
+    mcx+=(mtx-mcx)*0.07; mcy+=(mty-mcy)*0.07;                // lerp cursor
+    var cx=Math.max(-1,Math.min(1,mcx)), cy=Math.max(-1,Math.min(1,mcy));
+    var spin=t*0.26;                                        // ~24s / revolution
+    var tilt=-1.0 + Math.sin(t*0.3)*0.05;
+    var pv=persp(0.92, aspect, 0.1, 100);
+    var scene=mul(pv, mul(trans(0,0,-4.7), mul(rotX(tilt + cy*0.16), rotY(spin + cx*0.16))));
     gl.clear(gl.COLOR_BUFFER_BIT);
-    drawBuf(starBuf, STARS, 30, [0.55,0.63,0.86], 0.5, bg);
-    drawBuf(ringBuf, RINGPTS, 44, [0.40,0.72,1.0], 0.78, scene);
-    drawBuf(nodeBuf, NODES, 200, [0.58,0.84,1.0], 1.8, scene);
-    // comet pulse: head + fading tail travelling along the ring
-    var tp=(t*0.12)%1, tail=[];
-    for(var k=0;k<6;k++){ var p=ringPos(tp - k*0.016); tail.push(p[0],p[1],p[2]); }
-    gl.bindBuffer(gl.ARRAY_BUFFER,pulseBuf);
-    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(tail),gl.DYNAMIC_DRAW);
-    gl.enableVertexAttribArray(A_pos); gl.vertexAttribPointer(A_pos,3,gl.FLOAT,false,0,0);
-    // tail (small, dim) then head (big, bright)
-    gl.uniformMatrix4fv(U_mvp,false,scene);
-    gl.uniform3fv(U_color,[0.78,0.94,1.0]);
-    gl.uniform1f(U_size,95*DPR); gl.uniform1f(U_int,0.9); gl.drawArrays(gl.POINTS,1,5);
-    gl.uniform1f(U_size,250*DPR); gl.uniform1f(U_int,2.3); gl.drawArrays(gl.POINTS,0,1);
-    if(running) raf=requestAnimationFrame(draw);
+    // ambient dust (drifting) — cool, violet, ember
+    draw(coolBuf, 24, C_COOL, 0.5,  scene, form, t, 0.14, 0.0);
+    draw(vioBuf,  26, C_VIO,  0.55, scene, form, t, 0.14, 0.0);
+    draw(emberBuf,28, C_EMBER,0.6,  scene, form, t, 0.14, 0.0);
+    // the loop ring + breathing nodes
+    draw(ringBuf, 40, C_RING, 0.8,  scene, form, t, 0.0, 0.0);
+    draw(nodeBuf, 200, C_NODE, 1.75, scene, form, t, 0.0, 0.14);
+    // comet: cool fading tail + warm ember head with hot-white core (built each frame)
+    var tp=(t*0.11)%1, carr=new Float32Array(TAIL*7), k, o, cp;
+    for(k=0;k<TAIL;k++){ cp=ringPos(tp - k*0.011); o=k*7;
+      carr[o]=cp[0];carr[o+1]=cp[1];carr[o+2]=cp[2]; carr[o+3]=cp[0];carr[o+4]=cp[1];carr[o+5]=cp[2]; carr[o+6]=0; }
+    gl.bindBuffer(gl.ARRAY_BUFFER,cometBuf); gl.bufferData(gl.ARRAY_BUFFER,carr,gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(A_t); gl.vertexAttribPointer(A_t,3,gl.FLOAT,false,28,0);
+    gl.enableVertexAttribArray(A_s); gl.vertexAttribPointer(A_s,3,gl.FLOAT,false,28,12);
+    gl.enableVertexAttribArray(A_se);gl.vertexAttribPointer(A_se,1,gl.FLOAT,false,28,24);
+    gl.uniformMatrix4fv(U_mvp,false,scene); gl.uniform1f(U_form,1.0); gl.uniform1f(U_time,t);
+    gl.uniform1f(U_drift,0); gl.uniform1f(U_breathe,0);
+    for(k=TAIL-1;k>=1;k--){ var f=k/TAIL;                   // tail fades out
+      gl.uniform3fv(U_color,C_TAIL); gl.uniform1f(U_size,(28+(1.0-f)*70)*DPR); gl.uniform1f(U_int,(1.0-f)*1.0+0.12);
+      gl.drawArrays(gl.POINTS,k,1); }
+    var hb=(0.9 + 0.15*Math.sin(t*2.2)) * form;             // head breathes + fades in with formation
+    gl.uniform3fv(U_color,C_EMBER); gl.uniform1f(U_size,240*DPR*hb); gl.uniform1f(U_int,2.2*hb); gl.drawArrays(gl.POINTS,0,1);
+    gl.uniform3fv(U_color,C_HOT);   gl.uniform1f(U_size,105*DPR*hb); gl.uniform1f(U_int,2.7*hb); gl.drawArrays(gl.POINTS,0,1);
+    if(running) raf=requestAnimationFrame(render);
   }
-  function start(){ if(running) return; running=true; t0=0; raf=requestAnimationFrame(draw); }
+  function start(){ if(running) return; running=true; raf=requestAnimationFrame(render); }
   function stop(){ running=false; if(raf) cancelAnimationFrame(raf); raf=0; }
 
-  // pause when tab hidden or hero scrolled offscreen
   document.addEventListener('visibilitychange', function(){ if(document.hidden) stop(); else if(onscreen) start(); });
   var onscreen=true;
   if('IntersectionObserver' in window){

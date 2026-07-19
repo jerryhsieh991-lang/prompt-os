@@ -50,9 +50,12 @@ source of truth. Nothing is hand-written per prompt.
 - **Facets** are derived signals: verifier type, model-tier hint, length, starter membership,
   and recurring patterns. There is deliberately no fabricated quality score.
 - The **home hero** is a dark deep-space band with a real-time 3D loop rendered in **raw WebGL**
-  (zero dependencies): a glowing ring of loop-stage nodes with a comet pulse orbiting it. It pauses
-  when offscreen/hidden and falls back to a static SVG ring for reduced-motion / no-WebGL / no-JS.
-  The rest of the site keeps its warm, fast, readable theme.
+  (zero dependencies, no Three.js). On load the ring **assembles from scattered particles** (formation,
+  easeOutCubic); then it rotates slowly (~24s/rev) with a warm-ember **comet** orbiting it, an ambient
+  dust field (cool + violet + a few ember motes), per-node breathing, and a **cursor-parallax tilt**
+  (lerp 0.07). Palette is a matched indigo->violet gradient + cyan->violet glow ramp with a terracotta
+  ember accent that ties the cool hero to the warm body. It pauses when offscreen/hidden and falls back
+  to a static SVG ring for reduced-motion / no-WebGL / no-JS. The rest of the site keeps its warm theme.
 - Output is static HTML + CSS + JS only: no tracking, no external requests, and deployable to
   GitHub Pages under the `/prompt-os/` subpath with relative internal links.
 
