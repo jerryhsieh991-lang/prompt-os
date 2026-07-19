@@ -170,23 +170,30 @@ def _explicit_verifier_text(prompt_text: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+# Verifier keyword lists — module constants so the Python engine AND the
+# client-side /lab & /compare analyzer share ONE source of truth (emitted via
+# analysis_rules()). Mechanical = execution ground-truth; judge = model/rubric.
+MECH_KEYWORDS = (
+    "test suite", "benchmark", "schema valid", "json schema", "compiler",
+    "compile", "validator", "diff tool", "scanner", "coverage tool",
+    "exit code", "back-translation", "field f1", "pass count", "golden",
+    "run the test", "same test command", "reproduces the reported failure",
+    "run in ci", "test command", "checker", "harness", "ocr",
+    "run the script", "re-run the", "reproduce the",
+)
+JUDGE_KEYWORDS = (
+    "rubric", "judge", "persona", "fresh-reader", "fresh reader",
+    "self-critique", "re-reads", "reviewer", "grade", "human review",
+    "llm-with-vision", "scor",
+)
+
+
 def derive_verifier_type(model: str, prompt_text: str) -> str:
     """Honest facet: mechanical (execution ground-truth) vs judge (model/rubric)."""
     explicit = _explicit_verifier_text(prompt_text)
     blob = (model + " " + (explicit or prompt_text)).lower()
-    mechanical = any(k in blob for k in (
-        "test suite", "benchmark", "schema valid", "json schema", "compiler",
-        "compile", "validator", "diff tool", "scanner", "coverage tool",
-        "exit code", "back-translation", "field f1", "pass count", "golden",
-        "run the test", "same test command", "reproduces the reported failure",
-        "run in ci", "test command", "checker", "harness", "ocr",
-        "run the script", "re-run the", "reproduce the",
-    ))
-    judge = any(k in blob for k in (
-        "rubric", "judge", "persona", "fresh-reader", "fresh reader",
-        "self-critique", "re-reads", "reviewer", "grade", "human review",
-        "llm-with-vision", "scor",
-    ))
+    mechanical = any(k in blob for k in MECH_KEYWORDS)
+    judge = any(k in blob for k in JUDGE_KEYWORDS)
     if mechanical and not judge:
         return "mechanical"
     if judge and not mechanical:
@@ -798,6 +805,23 @@ def complexity_profile(p: dict) -> dict:
     return prof
 
 
+def analysis_rules() -> dict:
+    """Serialize the deterministic analysis engine's rule tables for the client-side
+    /lab & /compare analyzer, so the browser mirrors this module without a second
+    source of truth. Regex sources are authored JS-compatible (RegExp)."""
+    return {
+        "anatLabels": ANAT_LABELS,
+        "anatOrder": ANAT_ORDER,
+        "anchors": [[role, src] for role, src in _ANCHORS],  # compiled 'gi' client-side
+        # explicit VERIFIER: clause — JS-adapted (dotAll via [\s\S], \Z -> $)
+        "explicitVerifier": r"\b(?:INDEPENDENT\s+)?VERIFIER\s*:\s*([\s\S]+?)(?=\n\s*\n|\s+(?:LOOP|PER-TURN|CARRY|STOP)\s*:|$)",
+        "mechKw": list(MECH_KEYWORDS),
+        "judgeKw": list(JUDGE_KEYWORDS),
+        "patternMeta": [[k, n, r, b] for k, n, r, b in PATTERN_META],
+        "stopArms": list(STOP_ARM_NAMES),
+    }
+
+
 def parse_redundancy_map(prompts: list[dict]) -> dict:
     """Explicit cross-family relatives from the library's own '≈' curation lines (README).
 
@@ -935,6 +959,8 @@ def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head
     <a class="brand" href="{prefix}index.html">prompt<span>·</span>os</a>
     <nav aria-label="Primary">
       <a href="{prefix}find.html">Find</a>
+      <a href="{prefix}lab.html">Lab</a>
+      <a href="{prefix}compare.html">Compare</a>
       <a href="{prefix}library.html">Library</a>
       <a href="{prefix}patterns.html">Patterns</a>
       <a href="{prefix}graph.html">Graph</a>
@@ -1228,8 +1254,12 @@ def render_home(prompts: list[dict], principles: dict, stats: dict) -> str:
     <p class="sub">Explore {stats['total']} verified prompts — their internal anatomy, validation
     systems, loops, stopping conditions, and automation patterns. Every one is a
     <em>frozen goal → one action → independent verifier → multi-armed stop</em>.</p>
+    <p class="hero-icp">For engineers building AI agents and loops: a working reference for prompts that
+    <strong>finish, check their own work, and can't loop forever</strong> — and a
+    <a href="lab.html">Lab</a> to X-ray your <em>own</em> prompt the same way.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="find.html">Find your prompt</a>
+      <a class="btn btn-ghost" href="lab.html">Analyze your prompt</a>
       <a class="btn btn-ghost" href="library.html">Browse the library</a>
     </div>
 
@@ -1629,6 +1659,88 @@ def render_find() -> str:
                 desc="Describe what you want the AI to do and get the best-matching agent-loop prompt, "
                      "ranked across the whole verified corpus — client-side, no account.",
                 path="find.html")
+
+
+# ---- Lab: analyze your own prompt -------------------------------------------
+
+def render_lab() -> str:
+    """Paste any prompt; the SAME deterministic engine that powers the corpus
+    (anatomy / patterns / verifier / complexity / why) runs on it in the browser."""
+    example_ids = ["build-verify-1", "debug-rootcause-1", "research-until-dry-1"]
+    ex = "".join(
+        f'<button class="lab-ex" type="button" data-id="{html.escape(i)}">{html.escape(i)}</button>'
+        for i in example_ids
+    )
+    legend = "".join(f'<span class="anat-key anat-dot-{k}">{ANAT_LABELS[k]}</span>' for k in ANAT_ORDER)
+    body = f"""
+<section class="wrap lab-page">
+  <h1 class="section-h">Prompt Lab</h1>
+  <p class="section-sub">Paste <em>your own</em> agent-loop prompt. The same deterministic engine that
+  analyzes the {CORPUS_PROMPT_COUNT}-prompt library runs on it right here in your browser — it segments the
+  <a href="anatomy.html">loop anatomy</a>, detects recurring <a href="patterns.html">patterns</a>, classifies the
+  verifier, scores structural complexity, and explains why it works. No account, nothing sent anywhere.</p>
+  <div class="lab-box">
+    <label class="sr-only" for="labInput">Paste your prompt</label>
+    <textarea id="labInput" class="lab-input" rows="10" spellcheck="false"
+      placeholder="Paste an agent-loop prompt here — ideally one with a frozen goal, an independent verifier, one action per turn, and a stop condition (SUCCESS / BUDGET / NO-PROGRESS / BLOCKED)…"></textarea>
+    <div class="lab-actions">
+      <button class="btn btn-primary" id="labGo" type="button">Analyze this prompt →</button>
+      <button class="btn btn-ghost" id="labClear" type="button">Clear</button>
+      <span class="lab-load muted">or load an example: {ex}</span>
+    </div>
+  </div>
+  <div class="anat-legend lab-legend" hidden>{legend}</div>
+  <div id="labResults" class="lab-results" aria-live="polite"></div>
+  <p class="lab-note muted">Heuristic, not a grader — it reports the structure it can detect and flags what's
+  missing (e.g. no independent verifier, no stop arms). It works best on loop/agent prompts; a generic
+  “act as X” prompt has little loop structure to find, and the analysis will honestly say so.</p>
+</section>
+"""
+    return page("Prompt Lab · prompt-os", body, "",
+                desc="Paste your own agent-loop prompt and get an instant, client-side anatomy / pattern / "
+                     "verifier / complexity analysis from the same engine that powers the prompt-os library.",
+                path="lab.html")
+
+
+# ---- Compare: two prompts side by side --------------------------------------
+
+def render_compare() -> str:
+    """Pick two corpus prompts (or paste your own) and diff their loop structure."""
+    body = f"""
+<section class="wrap compare-page">
+  <h1 class="section-h">Compare two prompts</h1>
+  <p class="section-sub">Put two agent-loop prompts side by side and see how their structure differs —
+  shared vs unique <a href="patterns.html">patterns</a>, verifier type, complexity, the four exits, and the
+  full colour-coded <a href="anatomy.html">anatomy</a>. Pick from the {CORPUS_PROMPT_COUNT}-prompt library, or paste
+  your own into either side. All in your browser.</p>
+  <div class="cmp-pickers">
+    <div class="cmp-pick">
+      <label for="cmpSelA">Prompt A</label>
+      <select id="cmpSelA" class="cmp-select"><option value="">— choose from library —</option></select>
+      <details class="cmp-paste"><summary>or paste your own</summary>
+        <textarea id="cmpTextA" class="lab-input" rows="6" spellcheck="false" aria-label="Paste prompt A" placeholder="Paste prompt A…"></textarea>
+      </details>
+    </div>
+    <div class="cmp-pick">
+      <label for="cmpSelB">Prompt B</label>
+      <select id="cmpSelB" class="cmp-select"><option value="">— choose from library —</option></select>
+      <details class="cmp-paste"><summary>or paste your own</summary>
+        <textarea id="cmpTextB" class="lab-input" rows="6" spellcheck="false" aria-label="Paste prompt B" placeholder="Paste prompt B…"></textarea>
+      </details>
+    </div>
+  </div>
+  <div class="cmp-actions"><button class="btn btn-primary" id="cmpGo" type="button">Compare →</button></div>
+  <div id="cmpDiff" class="cmp-diff" aria-live="polite"></div>
+  <div id="cmpResults" class="cmp-results"></div>
+  <p class="lab-note muted">Same deterministic engine as the <a href="lab.html">Lab</a> — run on each side,
+  then diffed. Great for seeing why two prompts that look similar behave differently.</p>
+</section>
+"""
+    return page("Compare prompts · prompt-os", body, "",
+                desc="Compare two agent-loop prompts side by side — shared vs unique patterns, verifier type, "
+                     "complexity, stop arms, and full loop anatomy. Client-side, over the prompt-os library.",
+                path="compare.html",
+                extra_head='<link rel="preload" href="data/prompts.json" as="fetch" crossorigin>')
 
 
 # ---- Automation section -----------------------------------------------------
@@ -2556,9 +2668,57 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
   .statband{grid-template-columns:repeat(2,1fr)}
   .stat-n{font-size:1.45rem}
 }
+
+/* ---- Home ICP line ---- */
+.hero-icp{max-width:600px;margin:14px 0 0;color:var(--ink-soft);font-size:1rem;line-height:1.6}
+.hero-icp strong{color:var(--ink)}
+
+/* ---- Lab & Compare ---- */
+.chip-none{border-color:var(--line-strong);color:var(--muted)}
+.lab-page,.compare-page{max-width:920px}
+.lab-input{width:100%;padding:15px 16px;border:1px solid var(--line-strong);border-radius:var(--radius);
+  font-family:var(--mono);font-size:.9rem;line-height:1.55;background:var(--panel);color:var(--ink);resize:vertical}
+.lab-input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.lab-box{margin:0 0 10px}
+.lab-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:12px}
+.lab-load{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lab-ex,.find-ex{font-family:var(--mono);font-size:.78rem;padding:5px 10px;border:1px solid var(--line);
+  border-radius:999px;background:var(--panel);color:var(--ink-soft);cursor:pointer}
+.lab-ex:hover{border-color:var(--accent);color:var(--accent-ink)}
+.lab-results,.cmp-results{margin-top:20px}
+.lab-summary{font-size:1.02rem;margin:4px 0 16px}
+.lab-empty{padding:22px 0}
+.lab-note{margin-top:26px;font-size:.86rem;line-height:1.6}
+.anat-wrap{display:flex;flex-direction:column;gap:10px}
+.lab-flags{border:1px solid color-mix(in srgb,var(--warm,#c4622d) 45%,var(--line));
+  background:color-mix(in srgb,var(--warm,#c4622d) 8%,var(--panel));border-radius:var(--radius);padding:14px 16px;margin:0 0 20px}
+.lab-flags-h{font-weight:700;color:var(--warm,#c4622d);display:block;margin-bottom:6px}
+.lab-flags ul{margin:0;padding-left:20px} .lab-flags li{margin:3px 0}
+.cmp-pickers{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:0 0 14px}
+.cmp-pick label{display:block;font-weight:600;margin-bottom:6px}
+.cmp-select{width:100%;padding:11px 12px;border:1px solid var(--line-strong);border-radius:var(--radius);
+  background:var(--panel);color:var(--ink);font-size:.92rem}
+.cmp-paste{margin-top:8px} .cmp-paste summary{cursor:pointer;color:var(--ink-soft);font-size:.85rem}
+.cmp-paste textarea{margin-top:8px}
+.cmp-actions{margin:6px 0 4px}
+.cmp-diff-card{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);padding:18px 20px;margin:18px 0}
+.cmp-diff-row{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line)}
+.cmp-diff-row:first-of-type{border-top:0}
+.cmp-diff-k{font-family:var(--mono);font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.cmp-diff-row .chip{margin:0 4px 4px 0}
+.cmp-vs{font-family:var(--mono);font-size:.72rem;color:var(--warm,#c4622d);padding:0 4px}
+.cmp-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.cmp-col{border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;background:var(--panel);min-width:0}
+.cmp-col-h{margin:0 0 12px;font-size:1rem;overflow-wrap:anywhere}
+.cmp-col .anat-body{font-size:.82rem}
+@media (max-width:720px){
+  .cmp-pickers,.cmp-grid{grid-template-columns:1fr}
+  .cmp-diff-row{grid-template-columns:1fr}
+}
 """
 
 JS = r"""'use strict';
+/*__RULES__*/
 // Tabs (detail page)
 document.querySelectorAll('.tabs').forEach(function (tabs) {
   var panels = tabs.parentElement;
@@ -3167,6 +3327,245 @@ if (results) {
     if (m) { input.value = decodeURIComponent(m[1].replace(/\+/g, ' ')); run(); }
   });
 })();
+
+/* ===================== ANALYSIS ENGINE (client mirror of build_site.py) =====================
+   Reads window.PROMPTOS_RULES (rule tables emitted from the Python engine) so /lab and
+   /compare classify arbitrary pasted text with the SAME rules the site was built with. */
+var PROMPTOS = (function () {
+  var R = window.PROMPTOS_RULES;
+  if (!R) return null;
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var EXPL = new RegExp(R.explicitVerifier, 'i');
+  function explicitVerifier(t){var m=t.match(EXPL);return m?m[1].trim():'';}
+  function deriveVerifier(text, model){
+    var explicit=explicitVerifier(text);
+    var blob=((model||'')+' '+(explicit||text)).toLowerCase();
+    var mech=R.mechKw.some(function(k){return blob.indexOf(k)>=0;});
+    var judge=R.judgeKw.some(function(k){return blob.indexOf(k)>=0;});
+    if(mech&&!judge)return 'mechanical';
+    if(judge&&!mech)return 'judge';
+    if(mech&&judge)return 'mixed';
+    if(explicit)return 'mechanical';
+    return 'unspecified';
+  }
+  var ANCHORS=R.anchors.map(function(a){return [a[0], new RegExp(a[1],'gi')];});
+  function segmentAnatomy(text){
+    text=text.trim();
+    var hits=[], i, a, m;
+    for(i=0;i<ANCHORS.length;i++){a=ANCHORS[i];a[1].lastIndex=0;while((m=a[1].exec(text))){hits.push([m.index,a[0]]);if(m.index===a[1].lastIndex)a[1].lastIndex++;}}
+    hits.sort(function(x,y){return x[0]-y[0]||(x[1]<y[1]?-1:x[1]>y[1]?1:0);});
+    var cleaned=[];
+    for(i=0;i<hits.length;i++){if(cleaned.length&&hits[i][0]-cleaned[cleaned.length-1][0]<3)continue;cleaned.push(hits[i]);}
+    if(!cleaned.length)return [['goal',text]];
+    var segs=[];
+    if(cleaned[0][0]>0){var lead=text.slice(0,cleaned[0][0]).trim();if(lead)segs.push(['goal',lead]);}
+    for(i=0;i<cleaned.length;i++){var end=i+1<cleaned.length?cleaned[i+1][0]:text.length;var seg=text.slice(cleaned[i][0],end).trim();if(seg)segs.push([cleaned[i][1],seg]);}
+    var merged=[];
+    for(i=0;i<segs.length;i++){if(merged.length&&merged[merged.length-1][0]===segs[i][0])merged[merged.length-1][1]+=' '+segs[i][1];else merged.push([segs[i][0],segs[i][1]]);}
+    return merged;
+  }
+  function has(low){for(var i=1;i<arguments.length;i++)if(low.indexOf(arguments[i])>=0)return true;return false;}
+  function detectPatterns(text, verifier, fk){
+    var low=text.toLowerCase(), f=new Set();
+    if(low.indexOf('commit')>=0&&(has(low,'git reset','revert','discard')))f.add('commit-revert');
+    if(has(low,'never repeat','different approach','materially different','never the identical','not a re-tuned','not a retuned','oscillat'))f.add('anti-oscillation');
+    if(has(low,'escalate','hand off','hand it off','request human','needs a human','human can make','only a human','wait for a human'))f.add('human-escalation');
+    if(has(low,'do not edit',"don't edit",'off-limits',"while i'm here",'do not adopt',"don't refactor",'scope is','park those',"don't loosen","don't hand-tune",'not the moment'))f.add('freeze-scope');
+    if(verifier==='mechanical')f.add('mechanical-verifier');
+    if(verifier==='judge')f.add('judge-rubric');
+    if(fk==='redteam-verify'||has(low,'adversarial','refute','skeptic','red team','red-team'))f.add('adversarial-verify');
+    if(low.indexOf('regression')>=0&&has(low,'regression test','failing test','reproduce','frozen'))f.add('regression-first');
+    if(fk==='research-until-dry'||has(low,'dry counter','stale counter','saturat','no new'))f.add('research-saturation');
+    if(has(low,'fan-out','fan out','subagent','sub-agent','in parallel','parallelize'))f.add('fan-out');
+    if(low.indexOf('pipeline')>=0||(low.indexOf('stage')>=0&&has(low,'stage 1','each stage','stages'))){if(low.indexOf('pipeline')>=0||low.indexOf('stages')>=0)f.add('pipeline');}
+    if(has(low,'ratchet','strictness','per-file error','error count','error-count'))f.add('ratchet');
+    if(low.indexOf('characterization')>=0)f.add('characterization-test');
+    if(fk==='migration-codemod'||has(low,'worklist','codemod','call-site','call site'))f.add('worklist-codemod');
+    if(has(low,'shadow','expand-migrate-contract','expand, migrate','dual-write','dual write','shadow-read'))f.add('shadow-verify');
+    return f;
+  }
+  function parseStopArms(text){
+    var re=/\b(SUCCESS|BUDGET|NO-PROGRESS|BLOCKED)\b/g, hits=[], m;
+    while((m=re.exec(text)))hits.push([m.index,m.index+m[1].length,m[1]]);
+    var arms={};
+    for(var i=0;i<hits.length;i++){var nxt=i+1<hits.length?hits[i+1][0]:text.length;var d=text.slice(hits[i][1],nxt).replace(/^[\s:：—–\-·|]+/,'').trim();arms[hits[i][2]]=d;}
+    return arms;
+  }
+  function variables(text){var m=text.match(/<[^>\n]{1,50}>/g)||[];return Array.from(new Set(m)).sort();}
+  function complexity(text, patCount, varCount){
+    var steps=(text.match(/\(\d+\)/g)||[]).length;
+    var decisions=(text.match(/\bif\b/gi)||[]).length;
+    var nested=(text.match(/\([a-e]\)/g)||[]).length;
+    var arms=Object.keys(parseStopArms(text)).length;
+    var score=steps+patCount+decisions+nested+Math.floor(varCount/2);
+    return {steps:steps,stop_arms:arms,variables:varCount,decisions:decisions,patterns:patCount,nested:nested,chars:text.length,
+            band:score<10?'compact':score<16?'standard':'dense'};
+  }
+  function shortq(s,n){s=s.replace(/\s+/g,' ').trim();s=s.replace(/^(GOAL \(frozen\)|Goal \(frozen\)|GOAL|Goal|VERIFIER|Verifier|Carry forward[^:]*|LOOP \([^)]*\)|Turn shape)\s*[:.]?\s*/,'');if(s.length>n)s=s.slice(0,n).replace(/\s+\S*$/,'')+'…';return esc(s);}
+  function find1(text,re){var m=text.match(re);return m?m[1]:null;}
+  function whyPoints(text, verifier, fk){
+    var low=text.toLowerCase(), segs=segmentAnatomy(text), roles=new Set(segs.map(function(s){return s[0];})), pts=[];
+    var goalSeg=(segs.find(function(s){return s[0]==='goal';})||[null,text])[1];
+    pts.push(['Anchor to a measurable, frozen goal','goal','“'+shortq(goalSeg,190)+'”']);
+    var vclause=find1(text,/(verified by [^.;]+|as (?:your|the) verifier[^.;]*|VERIFIER:[^.;]+|independent check[^.;]*|independent(?:ly)? (?:verified|corroborat)[^.;]*)/i);
+    var vtxt=(verifier==='mechanical'||verifier==='judge'||verifier==='mixed')?'Verifier here is <strong>'+verifier+'</strong>. ':'';
+    vtxt+=vclause?'“'+shortq(vclause,150)+'”':'the mechanism that decides “done” is separate from what’s being changed.';
+    pts.push(['Verify with an independent signal, not self-assessment','verifier',vtxt]);
+    if(roles.has('action')||/\bONE\b/.test(text)){var a=find1(text,/(make (?:the )?(?:smallest|one)[^.;]+|exactly ONE[^.;]+|ONE (?:reversible |source |transform |resource |optimization |handler[- ]behavior )?[^.;]+)/i);if(a)pts.push(['One reversible action per turn, then observe','action','“'+shortq(a,150)+'”']);}
+    if(low.indexOf('commit')>=0&&(low.indexOf('git reset')>=0||low.indexOf('revert')>=0||low.indexOf('discard')>=0))pts.push(['Preserve a known-good workspace each turn',null,'Commit on improvement, revert on regression — a bad turn can’t corrupt the baseline.']);
+    if(roles.has('state')){var s=(segs.find(function(x){return x[0]==='state';})||[null,''])[1];pts.push(['Carry compact state across turns','state','“'+shortq(s,160)+'”']);}
+    if(/never repeat|different approach|materially different|don't keep grinding|oscillat|never the identical|never retry the identical|not a re-?tuned/.test(low)){var n=find1(text,/([^.;]*?(?:never repeat|different approach|materially different|don't keep grinding|oscillat|never the identical|never retry the identical|not a re-?tuned)[^.;]*)/i);pts.push(['Detect and break non-progress and oscillation',null,n?'“'+shortq(n,150)+'”':'A retry must change approach, not re-attempt the same thing.']);}
+    if(/do not edit|don't edit|off-limits|while i'm here|do not adopt|not the moment|scope is|don't loosen|park those|don't redesign|don't hand-tune|don't refactor/.test(low)){var fscope=find1(text,/([^.;]*?(?:do not edit|don't edit|off-limits|while I'm here|do not adopt|not the moment|scope is|don't loosen|park those|don't redesign|don't hand-tune|don't refactor)[^.;]*)/i);pts.push(['Freeze scope and ban gold-plating',null,fscope?'“'+shortq(fscope,150)+'”':'The loop closes the defined gap and nothing else.']);}
+    if(fk==='research-until-dry'||low.indexOf('dry counter')>=0||low.indexOf('stale counter')>=0||low.indexOf('saturat')>=0)pts.push(['For research loops, define saturation (‘dry’)',null,'It stops when new sources stop changing the answer — evidence-saturated, not effort-exhausted.']);
+    if(/escalate|hand off|hand it off|request human|needs a human|human can make|only a human|wait for a human/.test(low))pts.push(['Fail loud after repeated failure; escalate, don’t grind',null,'When progress stalls or a call needs a human, it halts and surfaces what was tried.']);
+    return pts;
+  }
+  // ---- analysis object + renderers ----
+  var STOP_CLASS={SUCCESS:'arm-success',BUDGET:'arm-budget','NO-PROGRESS':'arm-noprogress',BLOCKED:'arm-blocked'};
+  function highlight(escaped, role){
+    if(role==='stop')return escaped.replace(/\b(SUCCESS|BUDGET|NO-PROGRESS|BLOCKED)\b/g,function(m,g){return '<span class="'+STOP_CLASS[g]+'">'+g+'</span>';});
+    if(role==='action'||role==='context'||role==='verifier')return escaped.replace(/\b(independent verifier|as the verifier|as your verifier|as verifier|independent check|verifier|verify)\b|\b(git reset|commit|revert)\b/gi,function(m,v){return v?'<span class="hl-verify">'+m+'</span>':'<span class="hl-invariant">'+m+'</span>';});
+    return escaped;
+  }
+  var PNAME={}, PROLE={}; R.patternMeta.forEach(function(p){PNAME[p[0]]=p[1];PROLE[p[0]]=p[2];});
+  function analyze(text, opts){
+    opts=opts||{}; text=(text||'').trim();
+    var fk=opts.fk||'', model=opts.model||'';
+    var verifier=deriveVerifier(text,model);
+    var pats=Array.from(detectPatterns(text,verifier,fk));
+    var patsOrdered=R.patternMeta.map(function(p){return p[0];}).filter(function(k){return pats.indexOf(k)>=0;});
+    var vars=variables(text);
+    var cx=complexity(text,patsOrdered.length,vars.length);
+    return {text:text,roles:segmentAnatomy(text),verifier:verifier,patterns:patsOrdered,
+            complexity:cx,why:whyPoints(text,verifier,fk),stopArms:parseStopArms(text),variables:vars};
+  }
+  function anatomyHTML(roles){
+    return roles.map(function(rs){var e=highlight(esc(rs[1]),rs[0]).replace(/\n/g,'<br>');
+      return '<div class="anat anat-'+rs[0]+'"><span class="anat-label">'+esc(R.anatLabels[rs[0]])+'</span><div class="anat-body">'+e+'</div></div>';}).join('');
+  }
+  function patternChipsHTML(keys,prefix){
+    if(!keys.length)return '<p class="muted">No discriminating patterns detected.</p>';
+    return keys.map(function(k){return '<a class="chip chip-pattern" href="'+(prefix||'')+'pattern/'+k+'.html">'+esc(PNAME[k])+'</a>';}).join('');
+  }
+  function verifierBadgeHTML(v){
+    var d={mechanical:'execution / ground-truth signal',judge:'model / rubric judgment',mixed:'both mechanical and judged',unspecified:'no clear independent verifier detected'};
+    return '<span class="chip chip-verifier chip-'+(v==='unspecified'?'none':v)+'">'+v+' verifier</span><span class="muted"> — '+d[v]+'</span>';
+  }
+  function complexityHTML(cx){
+    var items=[['steps',cx.steps],['stop arms',cx.stop_arms],['patterns',cx.patterns],['variables',cx.variables],['decisions',cx.decisions]];
+    return '<div class="cx"><span class="cx-band cx-'+cx.band+'">'+cx.band+' structure</span>'+items.map(function(it){return '<span class="cx-item"><b>'+it[1]+'</b> '+it[0]+'</span>';}).join('')+'</div>';
+  }
+  function whyHTML(why){
+    return '<ul class="why-list">'+why.map(function(w){var dot=w[1]?'<span class="why-dot anat-dot-'+w[1]+'"></span>':'<span class="why-dot why-dot-plain"></span>';return '<li>'+dot+'<div class="why-text"><strong>'+esc(w[0])+'.</strong> <span class="why-ev">'+w[2]+'</span></div></li>';}).join('')+'</ul>';
+  }
+  function stopArmsHTML(arms){
+    var order=[['SUCCESS','arm-success'],['BUDGET','arm-budget'],['NO-PROGRESS','arm-noprogress'],['BLOCKED','arm-blocked']], rows='';
+    order.forEach(function(o){if(arms[o[0]]!==undefined)rows+='<div class="stoparm '+o[1]+'"><span class="arm-name">'+o[0]+'</span><span class="arm-body">'+esc(arms[o[0]])+'</span></div>';});
+    return rows?'<div class="stoparms">'+rows+'</div>':'';
+  }
+  function flagsHTML(a){
+    var flags=[], have=new Set(a.roles.map(function(r){return r[0];}));
+    if(a.verifier==='unspecified'&&!have.has('verifier'))flags.push('No <strong>independent verifier</strong> named — the loop may end up grading its own work.');
+    if(!Object.keys(a.stopArms).length)flags.push('No explicit <strong>stop condition</strong> (SUCCESS / BUDGET / NO-PROGRESS / BLOCKED) — a loop with no exit can run forever.');
+    if(!have.has('goal')&&a.roles.length)flags.push('No clearly <strong>frozen goal</strong> up front.');
+    if(!flags.length)return '';
+    return '<div class="lab-flags"><span class="lab-flags-h">⚠ Missing loop structure</span><ul>'+flags.map(function(f){return '<li>'+f+'</li>';}).join('')+'</ul></div>';
+  }
+  return {analyze:analyze,esc:esc,anatomyHTML:anatomyHTML,patternChipsHTML:patternChipsHTML,verifierBadgeHTML:verifierBadgeHTML,
+          complexityHTML:complexityHTML,whyHTML:whyHTML,stopArmsHTML:stopArmsHTML,flagsHTML:flagsHTML,anatLabels:R.anatLabels,anatOrder:R.anatOrder,PNAME:PNAME};
+})();
+
+/* ===================== LAB (analyze your own prompt) ===================== */
+(function () {
+  if (!PROMPTOS) return;
+  var input=document.getElementById('labInput'); if(!input) return;
+  var go=document.getElementById('labGo'), clear=document.getElementById('labClear'),
+      box=document.getElementById('labResults'), legend=document.querySelector('.lab-legend');
+  var EX={};
+  function render(a){
+    if(!a.text){box.innerHTML='<p class="lab-empty muted">Paste a prompt above, then Analyze.</p>';if(legend)legend.hidden=true;return;}
+    if(legend)legend.hidden=false;
+    var html=''+
+      '<div class="lab-summary">'+PROMPTOS.verifierBadgeHTML(a.verifier)+'</div>'+
+      PROMPTOS.flagsHTML(a)+
+      '<div class="patternrow"><span class="patternrow-label">Patterns</span>'+PROMPTOS.patternChipsHTML(a.patterns,'')+'</div>'+
+      PROMPTOS.complexityHTML(a.complexity)+
+      (a.variables.length?'<div class="vars"><span class="vars-label">Placeholders:</span> '+a.variables.map(function(v){return '<code class="var">'+PROMPTOS.esc(v)+'</code>';}).join(' ')+'</div>':'')+
+      '<h2 class="sub">Loop anatomy</h2><div class="anat-wrap">'+PROMPTOS.anatomyHTML(a.roles)+'</div>'+
+      '<h2 class="sub">Why it works (from your text)</h2>'+PROMPTOS.whyHTML(a.why)+
+      (Object.keys(a.stopArms).length?'<h2 class="sub">The four exits</h2>'+PROMPTOS.stopArmsHTML(a.stopArms):'');
+    box.innerHTML=html;
+    box.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+  function run(){render(PROMPTOS.analyze(input.value,{}));}
+  go.addEventListener('click',run);
+  input.addEventListener('keydown',function(e){if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run();});
+  clear.addEventListener('click',function(){input.value='';box.innerHTML='';if(legend)legend.hidden=true;input.focus();});
+  // examples: load real corpus prompt text (with its family_key so patterns match the detail page exactly)
+  var exBtns=[].slice.call(document.querySelectorAll('.lab-ex'));
+  if(exBtns.length){
+    fetch('data/prompts.json').then(function(r){return r.json();}).then(function(d){
+      d.forEach(function(p){EX[p.id]=p;});
+      exBtns.forEach(function(b){b.addEventListener('click',function(){var p=EX[b.getAttribute('data-id')];if(!p)return;input.value=p.prompt_text;render(PROMPTOS.analyze(p.prompt_text,{fk:p.family_key,model:p.model}));});});
+    });
+  }
+})();
+
+/* ===================== COMPARE (two prompts side by side) ===================== */
+(function () {
+  if (!PROMPTOS) return;
+  var selA=document.getElementById('cmpSelA'); if(!selA) return;
+  var selB=document.getElementById('cmpSelB'), taA=document.getElementById('cmpTextA'), taB=document.getElementById('cmpTextB'),
+      go=document.getElementById('cmpGo'), diffBox=document.getElementById('cmpDiff'), resBox=document.getElementById('cmpResults');
+  var BY={};
+  function colHTML(a,label){
+    return '<div class="cmp-col"><h3 class="cmp-col-h">'+label+'</h3>'+
+      '<div class="lab-summary">'+PROMPTOS.verifierBadgeHTML(a.verifier)+'</div>'+
+      '<div class="patternrow"><span class="patternrow-label">Patterns</span>'+PROMPTOS.patternChipsHTML(a.patterns,'')+'</div>'+
+      PROMPTOS.complexityHTML(a.complexity)+
+      '<h4 class="sub">Anatomy</h4><div class="anat-wrap">'+PROMPTOS.anatomyHTML(a.roles)+'</div>'+
+      (Object.keys(a.stopArms).length?'<h4 class="sub">Exits</h4>'+PROMPTOS.stopArmsHTML(a.stopArms):'')+'</div>';
+  }
+  function diffHTML(a,b){
+    var sa=new Set(a.patterns), sb=new Set(b.patterns);
+    var shared=a.patterns.filter(function(k){return sb.has(k);});
+    var onlyA=a.patterns.filter(function(k){return !sb.has(k);});
+    var onlyB=b.patterns.filter(function(k){return !sa.has(k);});
+    function names(ks){return ks.length?ks.map(function(k){return '<span class="chip chip-pattern">'+PROMPTOS.esc(PROMPTOS.PNAME[k])+'</span>';}).join(''):'<span class="muted">none</span>';}
+    var rows=''+
+      '<div class="cmp-diff-row"><span class="cmp-diff-k">Verifier</span><span>'+a.verifier+(a.verifier===b.verifier?' <span class="muted">(same)</span>':' <span class="cmp-vs">vs</span> '+b.verifier)+'</span></div>'+
+      '<div class="cmp-diff-row"><span class="cmp-diff-k">Complexity</span><span>'+a.complexity.band+(a.complexity.band===b.complexity.band?' <span class="muted">(same)</span>':' <span class="cmp-vs">vs</span> '+b.complexity.band)+'</span></div>'+
+      '<div class="cmp-diff-row"><span class="cmp-diff-k">Shared patterns</span><span>'+names(shared)+'</span></div>'+
+      '<div class="cmp-diff-row"><span class="cmp-diff-k">Only in A</span><span>'+names(onlyA)+'</span></div>'+
+      '<div class="cmp-diff-row"><span class="cmp-diff-k">Only in B</span><span>'+names(onlyB)+'</span></div>';
+    return '<div class="cmp-diff-card"><h2 class="section-h">What differs</h2>'+rows+'</div>';
+  }
+  function getSide(sel,ta){
+    var txt=(ta.value||'').trim();
+    if(txt)return PROMPTOS.analyze(txt,{});
+    var p=BY[sel.value]; if(!p)return null;
+    return PROMPTOS.analyze(p.prompt_text,{fk:p.family_key,model:p.model});
+  }
+  function run(){
+    var a=getSide(selA,taA), b=getSide(selB,taB);
+    if(!a||!b){resBox.innerHTML='<p class="muted">Pick a prompt (or paste one) on both sides.</p>';diffBox.innerHTML='';return;}
+    diffBox.innerHTML=diffHTML(a,b);
+    resBox.innerHTML='<div class="cmp-grid">'+colHTML(a,PROMPTOS.esc(taA.value.trim()?'Prompt A (pasted)':(BY[selA.value]?BY[selA.value].title:'Prompt A')))+colHTML(b,PROMPTOS.esc(taB.value.trim()?'Prompt B (pasted)':(BY[selB.value]?BY[selB.value].title:'Prompt B')))+'</div>';
+  }
+  go.addEventListener('click',run);
+  fetch('data/prompts.json').then(function(r){return r.json();}).then(function(d){
+    d.sort(function(x,y){return x.family_title<y.family_title?-1:x.family_title>y.family_title?1:(x.title<y.title?-1:1);});
+    var opts='';
+    d.forEach(function(p){BY[p.id]=p;opts+='<option value="'+p.id+'">'+PROMPTOS.esc(p.family_title+' — '+p.title)+'</option>';});
+    selA.innerHTML+=opts; selB.innerHTML+=opts;
+    // sensible defaults: two different prompts
+    if(d.length>1){selA.value=d[0].id;selB.value=d[Math.min(1,d.length-1)].id;
+      var qa=location.search.match(/[?&]a=([^&]+)/), qb=location.search.match(/[?&]b=([^&]+)/);
+      if(qa&&BY[decodeURIComponent(qa[1])])selA.value=decodeURIComponent(qa[1]);
+      if(qb&&BY[decodeURIComponent(qb[1])])selB.value=decodeURIComponent(qb[1]);
+      run();}
+  });
+})();
 """
 
 
@@ -3176,7 +3575,12 @@ if (results) {
 
 def build():
     global ASSET_VER, CORPUS_PROMPT_COUNT
-    ASSET_VER = hashlib.md5((CSS + JS).encode("utf-8")).hexdigest()[:8]
+    # Inject the deterministic engine's rule tables into app.js so /lab & /compare
+    # analyze arbitrary pasted text with the SAME rules as the Python build (one
+    # source of truth). Done before hashing so cache-busting covers the rules.
+    js_final = JS.replace("/*__RULES__*/",
+                          "window.PROMPTOS_RULES=" + json_for_script(analysis_rules()) + ";")
+    ASSET_VER = hashlib.md5((CSS + js_final).encode("utf-8")).hexdigest()[:8]
 
     prompts: list[dict] = []
     for key, _ in FAMILIES:
@@ -3208,7 +3612,7 @@ def build():
 
     # analysis (deterministic)
     stats = corpus_stats(prompts)
-    stats["generated_pages"] = 11 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
+    stats["generated_pages"] = 13 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
     related = build_related(prompts)
     # optional authored pattern reference docs (produced by the pattern workflow); seed
     # blurbs are used when absent, so the site is complete with or without them.
@@ -3228,7 +3632,7 @@ def build():
     (SITE / "assets").mkdir(parents=True)
 
     (SITE / "assets" / "style.css").write_text(CSS, encoding="utf-8")
-    (SITE / "assets" / "app.js").write_text(JS, encoding="utf-8")
+    (SITE / "assets" / "app.js").write_text(js_final, encoding="utf-8")
 
     # JSON search index (trim prompt_text to keep it lean but searchable)
     index = [{
@@ -3236,6 +3640,7 @@ def build():
         "full_title": p["title"], "when": p["when"],
         "family_key": p["family_key"], "family_title": p["family_title"],
         "verifier_type": p["verifier_type"], "model_hint": p["model_hint"],
+        "model": p["model"],  # full routing note — lets /lab & /compare match detail-page classification exactly
         "starter": p["starter"],
         "patterns": [PATTERN_NAME[k] for k, _n, _r, _b in PATTERN_META if k in detect_patterns(p)],
         "prompt_text": p["prompt_text"],
@@ -3253,6 +3658,8 @@ def build():
     (SITE / "patterns.html").write_text(render_patterns_index(stats, pat_docs), encoding="utf-8")
     (SITE / "graph.html").write_text(render_graph(prompts, related), encoding="utf-8")
     (SITE / "find.html").write_text(render_find(), encoding="utf-8")
+    (SITE / "lab.html").write_text(render_lab(), encoding="utf-8")
+    (SITE / "compare.html").write_text(render_compare(), encoding="utf-8")
     (SITE / "evolve.html").write_text(render_evolution(), encoding="utf-8")
     (SITE / "loops.html").write_text(render_loops(prompts), encoding="utf-8")
     (SITE / "automation.html").write_text(render_automation_index(), encoding="utf-8")
@@ -3269,7 +3676,7 @@ def build():
             render_pattern_page(key, name, role, blurb, prompts, pat_docs.get(key, {})), encoding="utf-8")
 
     sitemap_urls = write_sitemap_and_robots()
-    total_pages = 11 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
+    total_pages = 13 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
     print(f"  parsed {n} prompts across {len(FAMILIES)} families ({starters} in starter set)")
     print(f"  wrote {total_pages} HTML pages + prompts.json + sitemap.xml + robots.txt + style.css + app.js -> {SITE.relative_to(ROOT)}/")
     if sitemap_urls != total_pages:

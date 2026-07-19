@@ -15,7 +15,7 @@ import build_site
 
 EXPECTED_PROMPTS = 154
 EXPECTED_FAMILIES = 26
-EXPECTED_HTML_PAGES = 218  # 11 top-level pages + 154 prompt + 26 family + 15 pattern + 12 automation
+EXPECTED_HTML_PAGES = 220  # 13 top-level pages + 154 prompt + 26 family + 15 pattern + 12 automation
 ANATOMY_SHORT_ALLOWLIST = {"orchestration-harness-8"}
 
 
@@ -194,6 +194,31 @@ class BuildSiteTests(unittest.TestCase):
         )
         self.assertEqual("verified before BUDGET expires", arms["SUCCESS"])
         self.assertEqual(set(build_site.STOP_ARM_NAMES), set(arms))
+
+    def test_lab_and_compare_wiring(self) -> None:
+        # analysis rules injected into app.js (single source of truth), placeholder gone
+        js = (build_site.SITE / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("/*__RULES__*/", js)
+        self.assertIn("window.PROMPTOS_RULES=", js)
+        for kw in build_site.MECH_KEYWORDS[:3]:
+            self.assertIn(kw, js)  # rule tables actually serialized
+        # /lab and /compare exist with their JS root hooks
+        lab = (build_site.SITE / "lab.html").read_text(encoding="utf-8")
+        self.assertIn('id="labInput"', lab)
+        cmp_ = (build_site.SITE / "compare.html").read_text(encoding="utf-8")
+        self.assertIn('id="cmpSelA"', cmp_)
+        self.assertIn('id="cmpSelB"', cmp_)
+        # engine mirrors the module's verifier keyword source, not a hardcoded copy
+        self.assertIn("R.mechKw", js)
+        self.assertIn("R.judgeKw", js)
+
+    def test_analysis_rules_cover_engine(self) -> None:
+        rules = build_site.analysis_rules()
+        self.assertEqual(list(build_site.MECH_KEYWORDS), rules["mechKw"])
+        self.assertEqual(list(build_site.JUDGE_KEYWORDS), rules["judgeKw"])
+        self.assertEqual([k for k, *_ in build_site.PATTERN_META],
+                         [row[0] for row in rules["patternMeta"]])
+        self.assertEqual(list(build_site.STOP_ARM_NAMES), rules["stopArms"])
 
     def test_inline_script_json_is_html_safe(self) -> None:
         encoded = build_site.json_for_script({"x": "</script><!-- --> & \u2028"})
