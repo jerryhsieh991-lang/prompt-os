@@ -911,6 +911,7 @@ def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head
   <div class="wrap head-inner">
     <a class="brand" href="{prefix}index.html">prompt<span>·</span>os</a>
     <nav aria-label="Primary">
+      <a href="{prefix}find.html">Find</a>
       <a href="{prefix}library.html">Library</a>
       <a href="{prefix}patterns.html">Patterns</a>
       <a href="{prefix}graph.html">Graph</a>
@@ -1205,8 +1206,8 @@ def render_home(prompts: list[dict], principles: dict, stats: dict) -> str:
     systems, loops, stopping conditions, and automation patterns. Every one is a
     <em>frozen goal → one action → independent verifier → multi-armed stop</em>.</p>
     <div class="cta-row">
-      <a class="btn btn-primary" href="library.html">Explore the library</a>
-      <a class="btn btn-ghost" href="loops.html">Watch a loop run</a>
+      <a class="btn btn-primary" href="find.html">Find your prompt</a>
+      <a class="btn btn-ghost" href="library.html">Browse the library</a>
     </div>
 
     <div class="hero-anim" id="heroAnim">
@@ -1566,6 +1567,45 @@ def render_evolution() -> str:
                 desc="Watch one instruction evolve from a rough request into a production agent loop, "
                      "gaining goal, verifier, loop, and a multi-armed stop one stage at a time.",
                 path="evolve.html")
+
+
+# ---- Prompt finder ----------------------------------------------------------
+
+def render_find() -> str:
+    examples = [
+        "debug a flaky test that fails intermittently",
+        "research a market before a big decision",
+        "extract structured data from invoices",
+        "get a fully-cited answer from my documents",
+        "refactor code without changing behavior",
+        "generate a product photo to a brand spec",
+        "write SQL and check the result is right",
+        "drive a browser to fill and submit a form",
+    ]
+    ex = "".join(f'<button class="find-ex" type="button" data-q="{html.escape(e)}">{html.escape(e)}</button>'
+                 for e in examples)
+    body = f"""
+<section class="wrap find-page">
+  <h1 class="section-h">Find your prompt</h1>
+  <p class="section-sub">Describe what you want the AI to do, in plain language. This ranks all
+  {CORPUS_PROMPT_COUNT} verified prompts by how well they fit your need and shows the best match —
+  entirely in your browser, no account, no data sent anywhere.</p>
+  <div class="find-box">
+    <label class="sr-only" for="findQ">Describe what you need</label>
+    <textarea id="findQ" class="find-input" rows="3"
+      placeholder="e.g. I need to debug a flaky test that only fails sometimes…"></textarea>
+    <button class="btn btn-primary find-go" id="findGo" type="button">Find the best prompt →</button>
+  </div>
+  <div class="find-examples"><span class="muted">Try:</span> {ex}</div>
+  <div id="findResults" class="find-results" aria-live="polite"></div>
+  <p class="find-fallback muted">Prefer to browse? Use the <a href="library.html">full library</a> with filters,
+  or explore <a href="graph.html">the constellation</a>.</p>
+</section>
+"""
+    return page("Find your prompt · prompt-os", body, "",
+                desc="Describe what you want the AI to do and get the best-matching agent-loop prompt, "
+                     "ranked across the whole verified corpus — client-side, no account.",
+                path="find.html")
 
 
 # ---- Automation section -----------------------------------------------------
@@ -2275,6 +2315,35 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .rel-list,.fail-list{max-width:80ch;color:var(--ink-soft)}
 .rel-list li,.fail-list li{margin:7px 0}
 
+/* prompt finder */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.find-page{padding-top:28px}
+.find-box{display:flex;flex-direction:column;gap:12px;max-width:720px}
+.find-input{width:100%;padding:16px;border:1px solid var(--line-strong);border-radius:var(--radius);
+  font-size:1.05rem;font-family:inherit;background:var(--panel);color:var(--ink);resize:vertical;line-height:1.5;box-shadow:var(--shadow)}
+.find-input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.find-go{align-self:flex-start;font-size:1rem;padding:12px 22px}
+.find-examples{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:16px 0 6px}
+.find-ex{font-size:.82rem;padding:6px 12px;border-radius:20px;border:1px dashed var(--line-strong);
+  background:var(--panel);cursor:pointer;color:var(--ink-soft);font-family:inherit}
+.find-ex:hover{border-color:var(--warm);color:var(--warm-ink);border-style:solid}
+.find-results{margin-top:14px}
+.find-count{font-family:var(--mono);font-size:.82rem;color:var(--muted);margin:0 0 14px}
+.find-best-wrap{margin-bottom:18px}
+.find-card{position:relative;display:flex;flex-direction:column;gap:7px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+.find-card:hover{border-color:var(--warm);text-decoration:none;transform:translateY(-2px);transition:.15s}
+.find-best{border-color:var(--accent);border-width:2px;padding:22px}
+.find-badge{position:absolute;top:-11px;left:16px;background:var(--accent);color:#fff;font-size:.7rem;
+  font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:3px 10px;border-radius:20px}
+.find-title{font-weight:700;color:var(--ink);font-size:1.05rem;line-height:1.25}
+.find-best .find-title{font-size:1.25rem}
+.find-when{font-size:.9rem;color:var(--ink-soft);line-height:1.5}
+.find-why{font-size:.82rem;color:var(--muted)}
+.find-why strong{color:var(--warm-ink);font-weight:600}
+.find-empty,.find-fallback{color:var(--ink-soft);max-width:70ch}
+.find-fallback{margin-top:22px;font-size:.9rem}
+
 /* prompt evolution */
 .evolution-page{padding-top:28px}
 .ev-dots{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 24px}
@@ -2956,6 +3025,122 @@ if (results) {
   var rb = document.getElementById('g-reset');
   if (rb) rb.addEventListener('click', function () { clr(); if (panel) panel.hidden = true; if (fsel) { fsel.value = ''; fsel.dispatchEvent(new Event('change')); } });
 })();
+
+/* ===================== PROMPT FINDER ===================== */
+(function () {
+  'use strict';
+  var box = document.getElementById('findResults'); if (!box) return;
+  var input = document.getElementById('findQ'), go = document.getElementById('findGo');
+  var STOP = {'the':1,'a':1,'an':1,'i':1,'to':1,'my':1,'me':1,'for':1,'that':1,'with':1,'help':1,'need':1,'want':1,
+    'ai':1,'prompt':1,'and':1,'or':1,'of':1,'in':1,'on':1,'is':1,'it':1,'this':1,'do':1,'get':1,'some':1,'kind':1,
+    'best':1,'can':1,'you':1,'how':1,'find':1,'give':1,'good':1,'so':1,'be':1,'able':1,'use':1,'user':1,'am':1,'looking':1};
+  // intent keyword -> matching family keys and/or pattern names (boosts on top of literal matches)
+  var INTENT = {
+    debug:{f:['debug-rootcause']}, flaky:{f:['debug-rootcause']}, intermittent:{f:['debug-rootcause']},
+    bug:{f:['debug-rootcause','build-verify']}, crash:{f:['debug-rootcause']}, stack:{f:['debug-rootcause']},
+    test:{f:['test-generation','build-verify']}, tests:{f:['test-generation','build-verify']}, coverage:{f:['test-generation']},
+    tdd:{f:['build-verify']}, failing:{f:['build-verify','debug-rootcause']}, green:{f:['build-verify']},
+    research:{f:['research-until-dry']}, market:{f:['research-until-dry']}, competitor:{f:['research-until-dry']},
+    sources:{f:['research-until-dry','rag-answer']}, cited:{f:['rag-answer']}, citation:{f:['rag-answer']},
+    rag:{f:['rag-answer']}, retrieval:{f:['rag-answer']}, retrieve:{f:['rag-answer']}, answer:{f:['rag-answer']},
+    docs:{f:['rag-answer','structured-extraction']}, document:{f:['rag-answer','structured-extraction']},
+    refactor:{f:['refactor-safe']}, migrate:{f:['migration-codemod']}, migration:{f:['migration-codemod']},
+    codemod:{f:['migration-codemod']}, rename:{f:['migration-codemod']},
+    image:{f:['image-generation']}, photo:{f:['image-generation']}, logo:{f:['image-generation']},
+    video:{f:['video-generation']}, clip:{f:['video-generation']},
+    sql:{f:['sql-analytics']}, query:{f:['sql-analytics']}, analytics:{f:['sql-analytics']}, metric:{f:['sql-analytics']},
+    browser:{f:['browser-agent']}, scrape:{f:['browser-agent']}, form:{f:['browser-agent','structured-extraction']},
+    login:{f:['browser-agent']}, checkout:{f:['browser-agent']}, click:{f:['browser-agent']},
+    extract:{f:['structured-extraction']}, schema:{f:['structured-extraction']}, invoice:{f:['structured-extraction']},
+    table:{f:['structured-extraction']}, parse:{f:['structured-extraction']},
+    memory:{f:['agent-memory']}, remember:{f:['agent-memory']}, tool:{f:['tool-use']}, api:{f:['tool-use']},
+    agent:{f:['multi-agent','orchestration-harness']}, supervisor:{f:['multi-agent','orchestration-harness']},
+    debate:{f:['multi-agent']}, judge:{f:['multi-agent'],p:['Judge / rubric']},
+    review:{f:['review-dimensions','redteam-verify']}, security:{f:['review-dimensions']},
+    verify:{f:['redteam-verify'],p:['Adversarial verification']}, claim:{f:['redteam-verify']}, factcheck:{f:['redteam-verify']},
+    critique:{f:['self-critique']}, revise:{f:['self-critique']}, draft:{f:['self-critique']}, edit:{f:['self-critique']},
+    plan:{f:['planning-decompose']}, planning:{f:['planning-decompose']}, decompose:{f:['planning-decompose']}, breakdown:{f:['planning-decompose']},
+    eval:{f:['eval-benchmark','prompt-optimization']}, benchmark:{f:['eval-benchmark']}, optimize:{f:['prompt-optimization']},
+    pipeline:{f:['data-pipeline','orchestration-harness']}, etl:{f:['data-pipeline']}, parallel:{f:['orchestration-harness']},
+    retry:{p:['Anti-oscillation']}, fallback:{p:['Human escalation']}, human:{p:['Human escalation']},
+    approval:{p:['Human escalation']}, escalate:{p:['Human escalation']}, deterministic:{p:['Mechanical verifier']}
+  };
+  var DATA = null;
+  function tokens(q) {
+    return (q.toLowerCase().match(/[a-z0-9]+/g) || []).filter(function (t) { return t.length > 1 && !STOP[t]; });
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function scoreOf(p, ts) {
+    var s = 0, why = { terms: {}, fam: false, pats: {} };
+    var t1 = (p.title + ' ' + (p.full_title || '') + ' ' + (p.alt || '')).toLowerCase();
+    var w = (p.when || '').toLowerCase(), f = (p.family_title || '').toLowerCase();
+    var pats = (p.patterns || []).join(' | ').toLowerCase(), body = (p.prompt_text || '').toLowerCase();
+    ts.forEach(function (t) {
+      if (t1.indexOf(t) >= 0) { s += 6; why.terms[t] = 1; }
+      if (w.indexOf(t) >= 0) { s += 4; why.terms[t] = 1; }
+      if (f.indexOf(t) >= 0) { s += 3; why.fam = true; }
+      if (pats.indexOf(t) >= 0) { s += 2; }
+      if (body.indexOf(t) >= 0) { s += 1; }
+      // intent boost
+      for (var key in INTENT) {
+        if (t === key || (t.length > 3 && key.indexOf(t) === 0) || (key.length > 3 && t.indexOf(key) === 0)) {
+          var m = INTENT[key];
+          if (m.f && m.f.indexOf(p.family_key) >= 0) { s += 5; why.fam = true; }
+          if (m.p) m.p.forEach(function (pn) { if ((p.patterns || []).indexOf(pn) >= 0) { s += 3; why.pats[pn] = 1; } });
+        }
+      }
+    });
+    if (p.starter) s += 0.6;
+    return { s: s, why: why };
+  }
+  function render(list, q) {
+    if (!q) { box.innerHTML = ''; return; }
+    if (!list.length) {
+      box.innerHTML = '<p class="find-empty">No strong match. Try different words (a task verb like “debug”, “research”, “extract”), or <a href="library.html">browse the library</a>.</p>';
+      return;
+    }
+    var top = list[0];
+    function whyText(r) {
+      var bits = [];
+      var terms = Object.keys(r.res.why.terms); if (terms.length) bits.push('matches <strong>' + terms.map(esc).join(', ') + '</strong>');
+      if (r.res.why.fam) bits.push('right family (' + esc(r.p.family_title) + ')');
+      var pats = Object.keys(r.res.why.pats); if (pats.length) bits.push('has ' + pats.map(esc).join(', '));
+      return bits.join(' · ') || 'partial keyword overlap';
+    }
+    function card(r, best) {
+      var p = r.p;
+      return '<a class="find-card' + (best ? ' find-best' : '') + '" href="prompt/' + p.id + '.html">' +
+        (best ? '<span class="find-badge">Best match</span>' : '') +
+        '<span class="pcard-fam">' + esc(p.family_title) + '</span>' +
+        '<span class="find-title">' + esc(p.title) + '</span>' +
+        '<span class="find-when">' + esc((p.when || '').slice(0, 130)) + '…</span>' +
+        '<span class="find-why">' + whyText(r) + '</span></a>';
+    }
+    box.innerHTML = '<p class="find-count">Top ' + list.length + ' of ' + DATA.length + ' — best fit first.</p>' +
+      '<div class="find-best-wrap">' + card(top, true) + '</div>' +
+      '<div class="pcard-grid">' + list.slice(1).map(function (r) { return card(r, false); }).join('') + '</div>';
+  }
+  function run() {
+    var q = (input.value || '').trim(); if (!DATA) return;
+    var ts = tokens(q);
+    if (!ts.length) { render([], ''); return; }
+    var scored = DATA.map(function (p) { return { p: p, res: scoreOf(p, ts) }; })
+      .filter(function (r) { return r.res.s > 0; })
+      .sort(function (a, b) { return b.res.s - a.res.s; }).slice(0, 6);
+    render(scored, q);
+  }
+  fetch('data/prompts.json').then(function (r) { return r.json(); }).then(function (d) {
+    DATA = d;
+    go.addEventListener('click', run);
+    input.addEventListener('keydown', function (e) { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') run(); });
+    [].slice.call(document.querySelectorAll('.find-ex')).forEach(function (b) {
+      b.addEventListener('click', function () { input.value = b.getAttribute('data-q'); run(); input.focus(); });
+    });
+    // deep-link: ?q=... (e.g. from the home hero)
+    var m = location.search.match(/[?&]q=([^&]+)/);
+    if (m) { input.value = decodeURIComponent(m[1].replace(/\+/g, ' ')); run(); }
+  });
+})();
 """
 
 
@@ -2994,7 +3179,7 @@ def build():
 
     # analysis (deterministic)
     stats = corpus_stats(prompts)
-    stats["generated_pages"] = 10 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
+    stats["generated_pages"] = 11 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
     related = build_related(prompts)
     # optional authored pattern reference docs (produced by the pattern workflow); seed
     # blurbs are used when absent, so the site is complete with or without them.
@@ -3023,6 +3208,7 @@ def build():
         "family_key": p["family_key"], "family_title": p["family_title"],
         "verifier_type": p["verifier_type"], "model_hint": p["model_hint"],
         "starter": p["starter"],
+        "patterns": [PATTERN_NAME[k] for k, _n, _r, _b in PATTERN_META if k in detect_patterns(p)],
         "prompt_text": p["prompt_text"],
     } for p in prompts]
     (SITE / "data" / "prompts.json").write_text(
@@ -3037,6 +3223,7 @@ def build():
     (SITE / "glossary.html").write_text(render_glossary(), encoding="utf-8")
     (SITE / "patterns.html").write_text(render_patterns_index(stats, pat_docs), encoding="utf-8")
     (SITE / "graph.html").write_text(render_graph(prompts, related), encoding="utf-8")
+    (SITE / "find.html").write_text(render_find(), encoding="utf-8")
     (SITE / "evolve.html").write_text(render_evolution(), encoding="utf-8")
     (SITE / "loops.html").write_text(render_loops(prompts), encoding="utf-8")
     (SITE / "automation.html").write_text(render_automation_index(), encoding="utf-8")
@@ -3053,7 +3240,7 @@ def build():
             render_pattern_page(key, name, role, blurb, prompts, pat_docs.get(key, {})), encoding="utf-8")
 
     sitemap_urls = write_sitemap_and_robots()
-    total_pages = 10 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
+    total_pages = 11 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
     print(f"  parsed {n} prompts across {len(FAMILIES)} families ({starters} in starter set)")
     print(f"  wrote {total_pages} HTML pages + prompts.json + sitemap.xml + robots.txt + style.css + app.js -> {SITE.relative_to(ROOT)}/")
     if sitemap_urls != total_pages:
