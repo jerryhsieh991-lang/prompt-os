@@ -143,14 +143,12 @@ Return the full corrected prompt object.
 
 ### 3. Video Generation loop prompt: legible on-screen caption via independent OCR verifier
 
-- **When:** User asked for one reliable AGENT-LOOP prompt for the Video Generation family, scenario: legible on-screen text, verifier: OCR of sampled frames vs target caption. One-shot content authoring task, no repo changes needed.
+- **When:** Use when generated video must contain a specific on-screen caption that only counts as correct if an external OCR verifier can read it across sampled frames.
 - **Loop:** assess (read prior state + last verifier output, pick single likely failure cause) -> one action (single reversible generation-config change, new output path) -> verify (run frozen external verify_caption.py OCR script) -> decide (SUCCESS/BUDGET/NO-PROGRESS/BLOCKED)
 - **Stop:** SUCCESS: verify_caption.py prints PASS with match_fraction >= MIN_PASS_FRACTION across sampled frames between START_TS and END_TS · BUDGET: MAX_ITERATIONS turns (placeholder, e.g. 8) · NO-PROGRESS: match_fraction flat within PROGRESS_EPSILON for K consecutive turns despite trying distinct action types · BLOCKED: missing OCR engine/video-gen credentials, unrenderable glyphs in target string, or awaiting human approval on a cost/credit gate
-- **Model:** Sonnet 5 (subagent, mechanical content-authoring task)
+- **Model:** Use a mid-tier model for mechanical caption/config iterations; escalate only when OCR failures point to ambiguous typography, timing, or generation-tool constraints.
 
 ```text
-## AGENT-LOOP: On-Screen Caption Legibility (Video Generation)
-
 Goal (frozen, mechanically-checkable): Produce a video clip at <OUTPUT_PATH> in which the on-screen text overlay, sampled at <SAMPLE_FPS> fps between <START_TS> and <END_TS>, OCRs to exactly <TARGET_CAPTION_STRING> (normalized per <NORMALIZATION_RULES>) on at least <MIN_PASS_FRACTION> of sampled frames, using <OCR_ENGINE> run as a standalone script never touched by the generation step.
 
 Independent verifier (frozen before loop starts, off-limits to edit): `verify_caption.py <video_path> <target_string>` — extracts frames at <SAMPLE_FPS>, crops to <TEXT_REGION_BBOX> if given, runs OCR, applies <NORMALIZATION_RULES>, prints `PASS <fraction>` or `FAIL <fraction> <misread_sample>`, exits 0/1.

@@ -4,20 +4,12 @@
 
 ### 1. Text-to-SQL agent-loop prompt (SQL / Analytics family)
 
-- **When:** User asks Claude to answer a natural-language analytics question against a database by generating and running SQL, in the style of the prompt-os loop library (e.g. /Users/jerryjerry/Projects/prompt-os/loops/*.md).
+- **When:** Use when a natural-language analytics question must be answered with a read-only SQL query whose actual result is checked by an independent sanity script before it is trusted.
 - **Loop:** assess -> one action (write/revise one SQL query) -> verify (execute query + run independent sanity-assertion checker) -> decide
 - **Stop:** SUCCESS: The query executes without error against the target database AND the independent sanity-checker (a separate script/tool, not the model's own read of the output) confirms all of: (a) row count within the declared plausible range, (b) required columns non-null, (c) any declared numeric/date columns within their declared bounds, reconfirmed on the final run. · BUDGET: max_iterations query attempts (a hard cap on distinct query revisions this run may make). · NO-PROGRESS: Sanity-check pass count (0-3 of the assertion categories passing) is flat for 3 consecutive turns despite trying a different fix strategy each time (not the same edit repeated) — signals the loop should stop and escalate rather than keep guessing. · BLOCKED: The question is ambiguous against the schema (e.g. an entity/metric name matches 2+ plausible columns/tables with materially different results) and cannot be resolved without a human pick; OR a needed table/column does not exist in the schema; OR only a destructive/DDL statement could answer the question and no write-approval has been granted.
-- **Model:** Sonnet/mid-tier is sufficient for mechanical SQL syntax fixes once schema and sanity bounds are fixed; escalate to a stronger reasoning model up front to interpret schema ambiguity and set the sanity-assertion bounds (row-count range, non-null columns, numeric/date ranges) before the loop starts — those choices are Goodhart-prone if left to the loop itself.
+- **Model:** Use a mid-tier model for mechanical SQL syntax fixes once schema and sanity bounds are fixed; escalate to a stronger reasoning model or a human for schema ambiguity and sanity-bound design.
 
 ```text
-### Text-to-SQL with Independent Sanity-Checked Result
-
-- **When:** A natural-language analytics question must be answered by generating a SQL query against <database>, where "correct" isn't just "it ran" — the result also has to be plausible (right shape, right ranges) before it's trusted.
-- **Loop:** assess prior attempt's failure mode (syntax error / empty result / sanity-check fail) -> write or revise exactly ONE SQL query -> execute it read-only, then run the independent sanity-checker against the result -> decide
-- **Stop:** SUCCESS: query executes cleanly AND the sanity-checker confirms row-count range, non-null required columns, and declared numeric/date bounds all pass, reconfirmed on the final run · BUDGET: max_iterations query attempts reached · NO-PROGRESS: sanity-check pass count (0-3 categories) flat for 3 consecutive turns despite trying a different fix strategy each time · BLOCKED: the question is ambiguous against the schema (2+ plausible tables/columns with materially different results), a referenced table/column doesn't exist, or answering would require a write/DDL statement without approval
-- **Model:** Sonnet/mid-tier handles syntax-fixing iterations fine once schema and sanity bounds are fixed up front. Use a stronger model (or a human) to write <schema_notes> disambiguation and set the sanity-assertion bounds before the loop starts — a wrong row-count range or missing non-null constraint lets a bad query pass silently.
-
-``​`text
 Goal (frozen): produce ONE SQL query against <database> (schema reference: <schema_notes>) that correctly answers "<nl_question>", where correctness is judged by an independent sanity-checker script (NOT the model re-reading its own output) confirming, on the query's actual result set: (a) row count falls within <expected_row_range>; (b) columns in <required_nonnull_columns> contain no NULLs; (c) any column in <numeric_date_bounds> falls within its declared min/max. Define <expected_row_range>, <required_nonnull_columns>, and <numeric_date_bounds> BEFORE the loop starts, from domain knowledge of the schema and question — not by peeking at a query's output and backfitting bounds to make it pass.
 
 Per turn:
@@ -29,7 +21,6 @@ Per turn:
 Carry forward each turn: the current best query text, which of the 3 sanity categories currently pass/fail, the specific failure reason each turn (not just pass/fail), fix strategies already tried per failure mode (never retry the identical edit verbatim), iterations used, budget remaining.
 
 Stop on the FIRST that trips: SUCCESS — query executes cleanly and the sanity-checker confirms row-count range, required non-null columns, and declared numeric/date bounds all pass, reconfirmed on a second run; BUDGET — <max_iterations> query attempts; NO-PROGRESS — sanity-check pass count unchanged for 3 consecutive turns despite a genuinely different fix strategy each turn (not A->B->A oscillation between two query variants); BLOCKED — the question is ambiguous against the schema and needs a human pick between 2+ plausible interpretations, a referenced table/column does not exist, or the only way to answer would require a write/DDL statement (requires explicit human approval before executing — never issue a write query to "fix" a read-only sanity failure).
-``​`
 ```
 
 ### 2. SQL Query Optimization to a Latency Budget — Agent-Loop Prompt

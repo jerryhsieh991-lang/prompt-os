@@ -4,20 +4,12 @@
 
 ### 1. Structured Extraction loop prompt — Table Extraction from a Document
 
-- **When:** Task: author one reliable AGENT-LOOP PROMPT for the Structured Extraction family, scenario = table extraction from a document, verifier = independent cell-by-cell validation against the source table region.
+- **When:** Use when a source document contains one or more tables that must be extracted into structured rows/columns, with every emitted cell independently checked against the source region.
 - **Loop:** assess -> one action (extract/fix one table region) -> independent verify (re-render/OCR the source region and diff against emitted cells) -> decide
-- **Stop:** SUCCESS: Delivered a single loop-prompt block in the library's exact style (When/Loop/Stop/Model bullets + frozen Goal, per-turn shape, carry-forward state, four-armed Stop line), matching loops/data-pipeline.md formatting, scenario-concrete with no marketing language. · BUDGET: Single-turn authoring task; no iteration budget consumed. · NO-PROGRESS: n/a — one-shot deliverable, not an executing loop. · BLOCKED: Not blocked; no missing resources.
-- **Model:** Sonnet 5 (subagent)
+- **Stop:** SUCCESS: every table region in the document has 100% cell-level match against the independent verifier on its most recent check · BUDGET: <max_iterations> region-extraction attempts reached · NO-PROGRESS: mismatch count across all regions unchanged for 3 consecutive turns despite trying a different extraction strategy · BLOCKED: a region is unreadable (scan quality, merged/rotated cells, no ground-truth-derivable text) and needs a human to transcribe or approve a fallback
+- **Model:** Use a mid-to-high reasoning model for layout-heavy extraction; keep the verifier as a separate OCR/text-layer + geometry mechanism so the extractor cannot grade itself.
 
 ```text
-### Table Extraction from a Document
-
-- **When:** A source document (PDF, scanned image, HTML report) contains one or more tables that must be converted into structured rows/columns (CSV/JSON), and every emitted cell must be traceable back to what the source region actually shows — not just plausible-looking.
-- **Loop:** assess which table region(s) remain unverified or failed last check -> extract/re-extract exactly ONE table region into structured cells -> run an independent verifier that re-derives ground truth from that same source region (OCR/re-render + geometric cell-boundary check) and diffs it against the emitted cells -> commit the region on match, else revert and log the mismatch -> decide
-- **Stop:** SUCCESS: every table region in the document has 100% cell-level match against the independent verifier on its most recent check · BUDGET: <max_iterations> region-extraction attempts reached · NO-PROGRESS: mismatch count across all regions unchanged for 3 consecutive turns despite trying a different extraction strategy · BLOCKED: a region is unreadable (scan quality, merged/rotated cells, no ground-truth-derivable text) and needs a human to transcribe or approve a fallback
-- **Model:** Layout reasoning (merged cells, multi-line cell wrapping, header/footer distinguishing) benefits from a mid-to-high reasoning model for the extraction step; the verifier must be a separate mechanism (OCR engine + geometry, not the same model call) so it can't rubber-stamp its own output — never let the extracting model also grade itself.
-
-``​`text
 Goal (frozen): every table in <source_document>, region by region as identified by <region_list> (page + bounding box per table), is represented in <output_format> (CSV/JSON) with every cell exactly matching what an INDEPENDENT verifier — a separate OCR/text-layer extraction plus geometric cell-boundary reconstruction over the SAME source region, never the extracting model re-reading its own output — reports as ground truth for that region. A region counts as done only when the verifier reports 0 mismatched cells (value, row position, and column position all correct) on its most recent check. Freeze <region_list> and the verifier's OCR/geometry config before the loop starts; do not redefine table boundaries or relax cell-matching tolerance mid-run to force a pass.
 
 Per turn: (1) assess — query the verifier's last run (or run it fresh if none exists) to find which region has mismatches, and pick the SINGLE region with the most outstanding mismatched cells; (2) act — extract or re-extract that ONE region only into <output_format>, choosing exactly one strategy this turn (e.g. re-run OCR with a different segmentation, manually reconcile a merged-cell span, fix a header/data-row misalignment) — do not touch any other region; (3) verify — run the independent verifier against that region's source bounding box, computing exact cell-level diff (value + row index + column index) between emitted output and re-derived ground truth; (4) decide — commit the region's output if mismatches dropped to 0 or decreased, revert to the prior attempt if mismatches increased (a regression means the last strategy was wrong), then move to the next-worst region.
@@ -25,7 +17,6 @@ Per turn: (1) assess — query the verifier's last run (or run it fresh if none 
 Carry forward each turn: per-region mismatch counts over the last 3 turns, which extraction strategy was already tried per region (never retry a failed one verbatim — e.g. don't re-run the same OCR config that just failed), regions committed as done, iterations used, budget remaining.
 
 Stop on the FIRST that trips: SUCCESS — every region shows 0 mismatched cells on its most recent independent verifier run; BUDGET — <max_iterations> extraction attempts reached; NO-PROGRESS — total mismatch count across all regions unchanged for 3 consecutive turns despite a genuinely different strategy each time; BLOCKED — a region's source quality (rotation, low-res scan, ambiguous merged cells) makes ground truth underivable even by the verifier, and needs a human to transcribe the region or approve a documented fallback. Never widen the verifier's match tolerance or hand-edit its ground truth to manufacture a pass — fix the extraction or escalate to BLOCKED.
-``​`
 ```
 
 ### 2. Structured Extraction: Invoice/Form Field Extraction with Confidence Gating

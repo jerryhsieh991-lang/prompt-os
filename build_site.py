@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Build the prompt-os educational website from the loop-prompt library.
 
-Source of truth: loops/*.md (14 family files, 8 prompts each) + loops/00-loop-engineering-principles.md.
+Source of truth: loops/*.md + loops/00-loop-engineering-principles.md.
 Output: site/ — a static, dependency-free educational site:
 
     site/index.html              Home
-    site/library.html            Searchable/filterable library of all 112 prompts (client-side)
+    site/library.html            Searchable/filterable library of all parsed prompts (client-side)
     site/anatomy.html            The universal loop anatomy + principles
-    site/prompt/<id>.html        112 prompt detail pages (Prompt / Anatomy / Why it works / Source)
-    site/family/<key>.html       14 family pages (with curation/redundancy notes)
+    site/prompt/<id>.html        Prompt detail pages (Prompt / Anatomy / Why it works / Source)
+    site/family/<key>.html       Family pages (with curation/redundancy notes)
     site/data/prompts.json       Search index + full records
     site/assets/style.css        Design system
     site/assets/app.js           Search, filters, tabs, copy
@@ -83,6 +83,12 @@ FAMILY_DESC = {
     "multi-agent": "Coordinate agents — supervisor/worker, debate, generator/critic, planner/executor — each checked by an independent frame.",
     "sql-analytics": "Text-to-SQL and analytics loops verified by running the query and asserting on the result, not by eyeballing.",
     "tool-use": "Call tools in a loop, verifying each call's real effect and recovering from errors instead of retrying blindly.",
+    "agent-memory": "Maintain, consolidate, and verify durable agent memory without losing facts, duplicating entries, or accepting unverified writes.",
+    "api-integration": "Implement and harden API integrations against fixed contracts, sandbox checks, idempotency, rate limits, and rollback-safe error handling.",
+    "data-labeling": "Label data against a frozen taxonomy with independent agreement checks, adjudication, and drift or quality gates.",
+    "incident-response": "Drive incident response from triage to verified mitigation with one action per turn, evidence capture, and explicit escalation gates.",
+    "structured-extraction": "Extract structured records from messy documents with schema validation, independent corroboration, and human-review fallback when fields cannot be trusted.",
+    "video-generation": "Iterate video generations against frozen visual, OCR, or motion verifiers, with cost gates and human approval before paid or public steps.",
 }
 
 
@@ -154,17 +160,32 @@ def split_title(title: str) -> tuple[str, str]:
     return title, ""
 
 
+def _explicit_verifier_text(prompt_text: str) -> str:
+    """Return the first explicit VERIFIER: clause/paragraph, if present."""
+    m = re.search(
+        r"(?i)\b(?:INDEPENDENT\s+)?VERIFIER\s*:\s*(.+?)(?=\n\s*\n|\s+(?:LOOP|PER-TURN|CARRY|STOP)\s*:|\Z)",
+        prompt_text,
+        re.S,
+    )
+    return m.group(1).strip() if m else ""
+
+
 def derive_verifier_type(model: str, prompt_text: str) -> str:
     """Honest facet: mechanical (execution ground-truth) vs judge (model/rubric)."""
-    blob = (model + " " + prompt_text).lower()
+    explicit = _explicit_verifier_text(prompt_text)
+    blob = (model + " " + (explicit or prompt_text)).lower()
     mechanical = any(k in blob for k in (
-        "test suite", "benchmark", "schema valid", "compiler", "compile",
-        "validator", "diff tool", "scanner", "coverage tool", "exit code",
-        "serial", "plan", "back-translation", "field f1", "pass count", "golden",
+        "test suite", "benchmark", "schema valid", "json schema", "compiler",
+        "compile", "validator", "diff tool", "scanner", "coverage tool",
+        "exit code", "back-translation", "field f1", "pass count", "golden",
+        "run the test", "same test command", "reproduces the reported failure",
+        "run in ci", "test command", "checker", "harness", "ocr",
+        "run the script", "re-run the", "reproduce the",
     ))
     judge = any(k in blob for k in (
         "rubric", "judge", "persona", "fresh-reader", "fresh reader",
-        "self-critique", "re-reads", "reviewer", "grade",
+        "self-critique", "re-reads", "reviewer", "grade", "human review",
+        "llm-with-vision", "scor",
     ))
     if mechanical and not judge:
         return "mechanical"
@@ -172,6 +193,8 @@ def derive_verifier_type(model: str, prompt_text: str) -> str:
         return "judge"
     if mechanical and judge:
         return "mixed"
+    if explicit:
+        return "mechanical"
     return "unspecified"
 
 
@@ -318,17 +341,17 @@ ANAT_ORDER = ["goal", "verifier", "action", "state", "stop", "context"]
 
 # Ordered anchor label -> loop role. These inline markers appear in BOTH the
 # blank-line-separated prompts and the dense single-paragraph ones (redteam,
-# test-gen, review, prompt-opt families), so anchor-splitting handles all 112
+# test-gen, review, prompt-opt families), so anchor-splitting handles the corpus
 # uniformly where paragraph-splitting collapsed a whole prompt into one block.
 _ANCHORS: list[tuple[str, str]] = [
     ("goal", r"GOAL \(frozen\)|Goal \(frozen\)|Frozen goal|GOAL:|Goal:|"
              r"Freeze the goal[^:.\n]*|Freeze the claim[^:.\n]*|Freeze the finding[^:.\n]*|"
              r"Freeze the conclusion[^:.\n]*|Freeze the thesis[^:.\n]*|Freeze the stated[^:.\n]*|"
              r"Freeze the root[^:.\n]*|Freeze this[^:.\n]*|Before turn 1, freeze[^:.\n]*|Target:"),
-    ("verifier", r"VERIFIER:|Verifier:"),
-    ("action", r"LOOP \(each turn\)|Each turn|Each round|Per turn|Turn shape|Every turn|"
-               r"First turn|Baseline first|Start by"),
-    ("state", r"Carry forward|Carry state|Carry compact|Maintain a |Maintain this |State log"),
+    ("verifier", r"(?:INDEPENDENT\s+)?VERIFIER\b(?=\s*[:(—-])|Independent checker|Independent validator"),
+    ("action", r"LOOP \(each turn\)|LOOP:|Each turn|Each round|Per turn|PER-TURN SHAPE|"
+               r"Turn shape|Every turn|First turn|Baseline first|Start by"),
+    ("state", r"Carry forward|CARRY-FORWARD STATE|Carry state|Carry compact|Maintain a |Maintain this |State log"),
     # A Stop/Halt clause is the word 'Stop'/'Halt' immediately followed (within one
     # sentence) by the uppercase arm enumeration. High precision: won't match a stray
     # 'don't stop early', catches every lead-in ('STOP on first', 'Halt the moment
@@ -347,7 +370,7 @@ def segment_anatomy(text: str) -> list[tuple[str, str]]:
     text = text.strip()
     hits: list[tuple[int, str]] = []
     for role, pat in _ANCHORS:
-        for m in re.finditer(pat, text):
+        for m in re.finditer(pat, text, re.I):
             hits.append((m.start(), role))
     hits.sort()
     # drop anchors that collide within a couple chars (keep the earliest/highest-priority)
@@ -932,7 +955,7 @@ def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head
   <div class="wrap">
     <p>{prompt_count} agent-loop prompts · {len(FAMILIES)} families · one shared anatomy.
     Content from the <strong>prompt-os</strong> loop library — generated by a
-    32-agent research→verify→curate pipeline, human-reviewed. Every prompt has an
+    multi-agent authoring process with adversarial verification, human-reviewed. Every prompt has an
     explicit stop condition; nothing loops forever.</p>
     <p class="muted">Static site generated from <code>loops/*.md</code> by <code>build_site.py</code>.
     No tracking, no external requests.</p>
@@ -1132,9 +1155,9 @@ def render_detail(p: dict, related_list: list) -> str:
   <section class="tabpanel" id="{tab_prefix}-panel-source" data-panel="source" role="tabpanel" aria-labelledby="{tab_prefix}-tab-source" tabindex="0">
     <dl class="source-dl">
       <dt>Collection</dt><dd>prompt-os loop library — this repository, family <code>{p['family_key']}</code>, prompt #{p['num']}.</dd>
-      <dt>Method</dt><dd>Generated by a 32-agent research → adversarial-verify → generate → curate workflow, then human-reviewed.</dd>
+      <dt>Method</dt><dd>Generated by multi-agent authoring with adversarial verification, then human-reviewed.</dd>
       <dt>Original / derived</dt><dd>Original — independently authored loop template, not copied from an external collection.</dd>
-      <dt>License</dt><dd>See the repository. Reuse the prompt text freely; keep this provenance note if you republish.</dd>
+      <dt>License</dt><dd>MIT — see LICENSE. Reuse the prompt text freely; keep this provenance note if you republish.</dd>
       <dt>Verifier type</dt><dd>{html.escape(p['verifier_type'])} — {'execution/ground-truth signal' if p['verifier_type']=='mechanical' else 'model/rubric judgment' if p['verifier_type']=='judge' else 'both mechanical and judged signals' if p['verifier_type']=='mixed' else 'not clearly specified'}.</dd>
     </dl>
     {dup_html}
@@ -2017,7 +2040,7 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .head-inner{display:flex;align-items:center;justify-content:space-between;height:60px}
 .brand{font-weight:700;font-size:1.15rem;color:var(--ink);letter-spacing:-.02em}
 .brand span{color:var(--warm)}
-.site-head nav{display:flex;gap:22px}
+.site-head nav{display:flex;gap:22px;flex-wrap:wrap}
 .site-head nav a{color:var(--ink-soft);font-weight:500;font-size:.95rem}
 .site-head nav a:hover{color:var(--accent-ink);text-decoration:none}
 .site-foot{border-top:1px solid var(--line);margin-top:64px;padding:32px 0;color:var(--ink-soft);font-size:.9rem}
@@ -2512,6 +2535,9 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 }
 
 @media (max-width:820px){.statband{grid-template-columns:repeat(2,1fr)}
+  .head-inner{height:auto;min-height:60px;flex-wrap:wrap;padding:8px 0;gap:2px 18px}
+  .brand{flex:1 1 100%}
+  .site-head nav{gap:14px}
   .lv-stage{grid-template-columns:1fr}.lv-ring{width:200px;height:200px;margin:0 auto}}
 @media (max-width:640px){
   .flow-step{grid-template-columns:1fr;gap:4px}
@@ -3172,6 +3198,9 @@ def build():
     empty_fams = [k for k, _ in FAMILIES if not any(p["family_key"] == k for p in prompts)]
     if empty_fams:
         print(f"  ! WARNING: families with no parsed prompts: {empty_fams}")
+    missing_desc = [k for k, _ in FAMILIES if not FAMILY_DESC.get(k)]
+    if missing_desc:
+        print(f"  ! WARNING: families missing FAMILY_DESC: {missing_desc}")
     missing = [p["id"] for p in prompts if not p["prompt_text"]]
     if missing:
         print(f"  ! WARNING: {len(missing)} prompts have empty prompt_text: {missing[:5]}")

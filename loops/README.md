@@ -1,6 +1,6 @@
 # Loop-prompt library
 
-**112 reusable agent-loop prompts** across 14 loop families. Each is a copy-pasteable, model-agnostic prompt with an explicit stop condition so an agent iterates to a goal without looping forever.
+**154 reusable agent-loop prompts** across 26 loop families. Each is a copy-pasteable, model-agnostic prompt with an explicit stop condition so an agent iterates to a goal without looping forever.
 
 Start with [loop-engineering principles](00-loop-engineering-principles.md), then browse a family:
 
@@ -46,7 +46,7 @@ The most broadly useful prompts to try first (from curation):
 
 ## Curation notes
 
-STRUCTURE: 14 families x 8 = 112 prompts, all sharing one meta-shape (frozen goal -> assess -> ONE reversible action -> independent verifier -> commit/revert -> 4-arm stop: SUCCESS/BUDGET/NO-PROGRESS/BLOCKED). That consistency is the library's main strength and makes prompts composable; the cost is heavy cross-family redundancy where the same loop reappears under a new framing.
+STRUCTURE: 154 prompts across 26 families, all sharing one meta-shape (frozen goal -> assess -> ONE reversible action -> independent verifier -> commit/revert -> 4-arm stop: SUCCESS/BUDGET/NO-PROGRESS/BLOCKED). That consistency is the library's main strength and makes prompts composable; the cost is heavy cross-family redundancy where the same loop reappears under a new framing.
 
 TOP REDUNDANCY (structural, not just the 15 pairs above): the entire eval-benchmark family is a near-mirror of the entire prompt-optimization family. eval-benchmark = 'change ONE lever, re-run frozen eval, commit/revert'; prompt-optimization = the special case where the lever is restricted to prompt text. Four clean 1:1 dup pairs (Classification, Code-Gen, RAG, Safety). Recommendation: keep eval-benchmark as the general form and demote prompt-optimization to a documented 'lever = prompt' variant rather than a full parallel family.
 

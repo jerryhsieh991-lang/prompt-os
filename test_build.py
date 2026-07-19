@@ -13,9 +13,10 @@ from urllib.parse import urlsplit
 import build_site
 
 
-EXPECTED_PROMPTS = 149
-EXPECTED_FAMILIES = 23
-EXPECTED_HTML_PAGES = 210  # 11 top-level pages + 149 prompt + 23 family + 15 pattern + 12 automation
+EXPECTED_PROMPTS = 154
+EXPECTED_FAMILIES = 26
+EXPECTED_HTML_PAGES = 218  # 11 top-level pages + 154 prompt + 26 family + 15 pattern + 12 automation
+ANATOMY_SHORT_ALLOWLIST = {"orchestration-harness-8"}
 
 
 class LinkCollector(HTMLParser):
@@ -148,11 +149,43 @@ class BuildSiteTests(unittest.TestCase):
             parsed = build_site.parse_family(key)
             self.assertGreater(len(parsed), 0, key)
 
+        missing_desc = [key for key, _title in build_site.FAMILIES if not build_site.FAMILY_DESC.get(key)]
+        self.assertEqual([], missing_desc)
+
         for prompt in self.prompts:
             with self.subTest(prompt=prompt["id"]):
                 self.assertTrue(prompt["prompt_text"].strip())
                 self.assertEqual(set(build_site.STOP_ARM_NAMES), set(prompt["stop_arms"]))
                 self.assertTrue(all(v.strip() for v in prompt["stop_arms"].values()))
+
+    def test_no_authoring_metadata_leaks_into_corpus(self) -> None:
+        leaked: list[tuple[str, str]] = []
+        patterns = ("Task: author", "(subagent)", "scenario =", "in the library's style")
+        for path in build_site.LOOPS.glob("*.md"):
+            text = path.read_text(encoding="utf-8")
+            for pattern in patterns:
+                if pattern in text:
+                    leaked.append((path.name, pattern))
+        self.assertEqual([], leaked)
+
+    def test_explicit_verifier_labels_classify(self) -> None:
+        explicit = [
+            prompt for prompt in self.prompts
+            if re.search(r"\bVERIFIER\s*:", prompt["prompt_text"], re.I)
+        ]
+        self.assertGreater(len(explicit), 0)
+        unspecified = [prompt["id"] for prompt in explicit if prompt["verifier_type"] == "unspecified"]
+        self.assertEqual([], unspecified)
+
+    def test_prompt_anatomy_segmentation_has_multiple_roles(self) -> None:
+        weak: list[tuple[str, list[str]]] = []
+        for prompt in self.prompts:
+            if prompt["id"] in ANATOMY_SHORT_ALLOWLIST:
+                continue
+            roles = sorted({role for role, _text in build_site.segment_anatomy(prompt["prompt_text"])})
+            if len(roles) < 3:
+                weak.append((prompt["id"], roles))
+        self.assertEqual([], weak)
 
     def test_stop_arm_parser_ignores_arm_words_inside_descriptions(self) -> None:
         arms = build_site.parse_stop_arms(
@@ -290,6 +323,13 @@ class BuildSiteTests(unittest.TestCase):
         self.assertIn("@media (prefers-reduced-motion:reduce)", css)
         self.assertIn("::view-transition-group(*)", css)
         self.assertNotIn("transition:all", css)
+
+    def test_header_nav_can_wrap_before_mobile_widths(self) -> None:
+        css = (build_site.SITE / "assets" / "style.css").read_text(encoding="utf-8")
+        self.assertIn(".site-head nav{display:flex;gap:22px;flex-wrap:wrap}", css)
+        self.assertIn("@media (max-width:820px)", css)
+        self.assertIn(".head-inner{height:auto;min-height:60px;flex-wrap:wrap", css)
+        self.assertIn(".brand{flex:1 1 100%}", css)
 
     def test_generated_pages_have_share_metadata(self) -> None:
         descriptions: list[str] = []
