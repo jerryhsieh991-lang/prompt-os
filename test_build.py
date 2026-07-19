@@ -15,7 +15,7 @@ import build_site
 
 EXPECTED_PROMPTS = 158
 EXPECTED_FAMILIES = 26
-EXPECTED_HTML_PAGES = 224  # 13 top-level pages + 158 prompt + 26 family + 15 pattern + 12 automation
+EXPECTED_HTML_PAGES = 225  # 14 top-level pages + 158 prompt + 26 family + 15 pattern + 12 automation
 ANATOMY_SHORT_ALLOWLIST = {"orchestration-harness-8"}
 
 
@@ -211,6 +211,24 @@ class BuildSiteTests(unittest.TestCase):
         # engine mirrors the module's verifier keyword source, not a hardcoded copy
         self.assertIn("R.mechKw", js)
         self.assertIn("R.judgeKw", js)
+
+    def test_learn_course_is_wired_and_grounded(self) -> None:
+        learn = (build_site.SITE / "learn.html").read_text(encoding="utf-8")
+        # one lesson + quiz per module, each with a valid answer index
+        self.assertEqual(len(build_site.LEARN_MODULES), learn.count('class="lesson"'))
+        correct_markers = re.findall(r'class="quiz" data-correct="(\d+)"', learn)
+        self.assertEqual(len(build_site.LEARN_MODULES), len(correct_markers))
+        for module, marker in zip(build_site.LEARN_MODULES, correct_markers):
+            self.assertLess(int(marker), len(module["quiz"]["options"]))  # answer index in range
+        # grounded: at least one lesson quotes a real principle body verbatim
+        principles = build_site.parse_principles()
+        bodies = [p["body"] for p in principles["principles"]]
+        self.assertTrue(any(build_site.html.escape(b[:60]) in learn for b in bodies),
+                        "learn page should quote real principle text, not fabricated prose")
+        # quiz interactivity + localStorage wired in app.js
+        js = (build_site.SITE / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("promptos_learn_v1", js)
+        self.assertIn(".learn-page", js)
 
     def test_analysis_rules_cover_engine(self) -> None:
         rules = build_site.analysis_rules()

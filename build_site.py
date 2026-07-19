@@ -961,6 +961,7 @@ def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head
       <a href="{prefix}find.html">Find</a>
       <a href="{prefix}lab.html">Lab</a>
       <a href="{prefix}compare.html">Compare</a>
+      <a href="{prefix}learn.html">Learn</a>
       <a href="{prefix}library.html">Library</a>
       <a href="{prefix}patterns.html">Patterns</a>
       <a href="{prefix}graph.html">Graph</a>
@@ -1741,6 +1742,199 @@ def render_compare() -> str:
                      "complexity, stop arms, and full loop anatomy. Client-side, over the prompt-os library.",
                 path="compare.html",
                 extra_head='<link rel="preload" href="data/prompts.json" as="fetch" crossorigin>')
+
+
+# ---- Learn: a grounded micro-course + quizzes -------------------------------
+
+# Each lesson's teaching text is the REAL principle body from the principles doc
+# (grounded, not fabricated); the quiz is authored but its answer is checkable
+# against that same principle/antipattern. `principle` = keywords matching a
+# principle name; `example` = how to pick a real corpus prompt to illustrate it.
+LEARN_MODULES = [
+    {"id": "what-is-a-loop", "title": "What is a loop?",
+     "principle": ["per-turn shape"],
+     "intro": "An agent-<em>loop</em> prompt isn't a one-shot instruction — it's a small, self-terminating "
+              "control structure. Every prompt in this library shares one shape: a <strong>frozen goal</strong>, "
+              "exactly <strong>one action per turn</strong>, an <strong>independent verifier</strong> that closes "
+              "each turn, and a <strong>multi-armed stop</strong>. Learn those four parts and you can read — and "
+              "write — any of them.",
+     "example": {"family": "build-verify"},
+     "quiz": {"q": "A loop prompt has four parts. Which of these is NOT one of them?",
+              "options": ["A frozen goal", "One reversible action per turn",
+                          "An independent verifier", "A promise to keep going until it's perfect"],
+              "correct": 3,
+              "explain": "“Keep going until it's perfect” is the #1 antipattern — “perfect” is never mechanically "
+                         "true, so the loop never terminates. The fourth part is an explicit, multi-armed STOP."}},
+    {"id": "frozen-goal", "title": "The frozen goal",
+     "principle": ["frozen goal"],
+     "example": {"id": "build-verify-1"},
+     "quiz": {"q": "Why is the goal “frozen” at the start of the loop?",
+              "options": ["So “done” means the same thing on turn 1 and turn 20",
+                          "To make the loop run faster",
+                          "So the model can redefine success if it's struggling",
+                          "To use fewer tokens"],
+              "correct": 0,
+              "explain": "Freeze the goal so “done” can't drift. Redefining success downward mid-run — moving the "
+                         "goalposts — is a named antipattern; a frozen, checkable goal is what prevents it."}},
+    {"id": "one-action", "title": "One reversible action per turn",
+     "principle": ["one reversible action"],
+     "example": {"family": "refactor-safe"},
+     "quiz": {"q": "Why exactly ONE reversible action per turn, instead of batching several edits?",
+              "options": ["So any regression is attributable to one action and can be rolled back cleanly",
+                          "Because a model can only change one thing at a time",
+                          "To make the prompt shorter",
+                          "It doesn't really matter"],
+              "correct": 0,
+              "explain": "Bundling edits destroys the observe→attribute signal: when verification fails you can't "
+                         "tell which change broke it, and rollback becomes all-or-nothing."}},
+    {"id": "independent-verifier", "title": "Verify with an independent signal",
+     "principle": ["independent signal"],
+     "example": {"pattern": "mechanical-verifier"},
+     "cta": '<a class="btn btn-ghost" href="lab.html">Paste your prompt into the Lab →</a> to see which verifier '
+            'type it uses (or whether it names one at all).',
+     "quiz": {"q": "Which of these is the antipattern called “self-grading”?",
+              "options": ["A test suite decides pass/fail",
+                          "The agent that produced the output also declares it correct",
+                          "A separate judge scores it against a fixed rubric",
+                          "A compiler checks that it builds"],
+              "correct": 1,
+              "explain": "Self-grading = the producer verifies its own work with no independent signal. The "
+                         "mechanism that decides “done” must differ from the thing being optimized."}},
+    {"id": "stop-arms", "title": "The four stop arms",
+     "principle": ["multi-armed"],
+     "example": {"id": "debug-rootcause-1"},
+     "quiz": {"q": "A loop with only a SUCCESS exit and no other arms is…",
+              "options": ["Perfectly safe", "An infinite loop waiting to happen",
+                          "Faster than a multi-armed loop", "The recommended design"],
+              "correct": 1,
+              "explain": "Halt on the FIRST arm that trips: SUCCESS, BUDGET (cap reached), NO-PROGRESS (metric "
+                         "flat for K turns), or BLOCKED (needs a human/resource). Success-only can't reach success → runs forever."}},
+    {"id": "non-progress", "title": "Break non-progress; escalate, don't grind",
+     "principle": ["non-progress"],
+     "example": {"pattern": "anti-oscillation"},
+     "quiz": {"q": "An agent keeps flipping between state A and state B while reporting “progress”. What is it, and what should happen?",
+              "options": ["Oscillation — force a strategy change or halt",
+                          "Normal exploration — let it continue",
+                          "Success — it's converging", "Budget — just add more iterations"],
+              "correct": 0,
+              "explain": "That's oscillation (A→B→A). Ban verbatim retries — a retry must change approach — and "
+                         "after ~3 failures fail loud and escalate with what was tried, rather than grind the budget."}},
+    {"id": "antipatterns", "title": "Antipatterns & your own prompt",
+     "principle": None,
+     "antipatterns": True,
+     "cta": '<a class="btn btn-primary" href="lab.html">Analyze your own prompt →</a> '
+            '<a class="btn btn-ghost" href="compare.html">or compare two →</a>',
+     "quiz": {"q": "Which of these is an antipattern that stops a loop from terminating usefully?",
+              "options": ["Parking “while I'm here” ideas in a backlog",
+                          "Scope creep / gold-plating discovered mid-loop",
+                          "Committing on improvement, reverting on regression",
+                          "Carrying compact state forward instead of the full transcript"],
+              "correct": 1,
+              "explain": "Scope creep / gold-plating is the antipattern — the loop should close the defined gap and "
+                         "nothing else. The other three are exactly the good practices this course teaches."}},
+]
+
+
+def _learn_principle(principles: dict, keys) -> dict | None:
+    for p in principles["principles"]:
+        n = p["name"].lower()
+        if all(k in n for k in keys):
+            return p
+    return None
+
+
+def _learn_example(prompts: list[dict], spec: dict) -> dict | None:
+    pid = spec.get("id")
+    if pid:
+        hit = next((p for p in prompts if p["id"] == pid), None)
+        if hit:
+            return hit
+    pat = spec.get("pattern")
+    if pat:
+        hit = next((p for p in prompts if pat in detect_patterns(p)), None)
+        if hit:
+            return hit
+    fam = spec.get("family")
+    if fam:
+        hit = next((p for p in prompts if p["family_key"] == fam), None)
+        if hit:
+            return hit
+    return None
+
+
+def render_learn(prompts: list[dict], principles: dict) -> str:
+    total = len(LEARN_MODULES)
+    lessons_html = []
+    for i, m in enumerate(LEARN_MODULES, 1):
+        # grounded teaching text: the real principle body, or the lesson's own intro/antipattern list
+        concept = ""
+        if m.get("intro"):
+            concept += f"<p>{m['intro']}</p>"
+        pr = _learn_principle(principles, m["principle"]) if m.get("principle") else None
+        if pr:
+            concept += (f'<blockquote class="learn-quote"><strong>{html.escape(pr["name"])}.</strong> '
+                        f'{html.escape(pr["body"])}</blockquote>')
+        if m.get("antipatterns"):
+            aps = principles["antipatterns"][:8]
+            concept += ('<p>The failure modes to recognize — a loop fails when it does any of these:</p>'
+                        '<ul class="learn-aps">'
+                        + "".join(f"<li>{html.escape(a)}</li>" for a in aps) + "</ul>")
+
+        ex = _learn_example(prompts, m.get("example", {})) if m.get("example") else None
+        ex_html = ""
+        if ex:
+            ex_html = (f'<div class="learn-ex"><span class="learn-ex-label">See it in a real prompt</span>'
+                       f'<a class="learn-ex-card" href="prompt/{ex["id"]}.html">'
+                       f'<span class="learn-ex-fam">{html.escape(ex["family_title"])}</span>'
+                       f'<span class="learn-ex-title">{html.escape(ex["display_title"])}</span>'
+                       f'<span class="learn-ex-when">{html.escape(ex["when"][:120])}…</span></a></div>')
+
+        q = m["quiz"]
+        opts = "".join(
+            f'<button class="quiz-opt" type="button" data-i="{oi}">{html.escape(o)}</button>'
+            for oi, o in enumerate(q["options"])
+        )
+        cta_html = f'<p class="learn-cta">{m["cta"]}</p>' if m.get("cta") else ""
+        lessons_html.append(f"""
+<section class="lesson" id="lesson-{m['id']}" data-lesson="{m['id']}">
+  <div class="lesson-head"><span class="lesson-num">{i}</span>
+    <h2 class="lesson-title">{html.escape(m['title'])}</h2>
+    <span class="lesson-done" hidden aria-hidden="true">✓ done</span></div>
+  <div class="lesson-body">
+    {concept}
+    {ex_html}
+    <div class="quiz" data-correct="{q['correct']}">
+      <h3 class="quiz-h">Check yourself</h3>
+      <p class="quiz-q">{html.escape(q['q'])}</p>
+      <div class="quiz-opts" role="group" aria-label="Answer options">{opts}</div>
+      <p class="quiz-explain" hidden>{q['explain']}</p>
+    </div>
+    {cta_html}
+  </div>
+</section>""")
+
+    body = f"""
+<section class="wrap learn-page">
+  <h1 class="section-h">Learn loop engineering</h1>
+  <p class="section-sub">A short, grounded course in the one skill this whole library is about: turning a task into
+  a reliable, self-terminating loop. {total} lessons, each with a real prompt from the corpus and a quick check.
+  Everything below is drawn straight from the library's own <a href="anatomy.html">principles</a> — nothing invented.
+  Progress is saved in your browser only.</p>
+  <div class="learn-progress" role="status" aria-live="polite">
+    <div class="learn-bar"><span class="learn-bar-fill" id="learnFill" style="width:0%"></span></div>
+    <span class="learn-count" id="learnCount">0 of {total} checks complete</span>
+    <button class="learn-reset" id="learnReset" type="button" hidden>Reset progress</button>
+  </div>
+  {''.join(lessons_html)}
+  <p class="lab-note muted">Finished the checks? The real test is your own work — run a prompt of yours through the
+  <a href="lab.html">Lab</a>, then read the underlying <a href="anatomy.html">anatomy</a> and
+  <a href="glossary.html">glossary</a>.</p>
+</section>
+"""
+    return page("Learn loop engineering · prompt-os", body, "",
+                desc=f"A short, grounded {total}-lesson course in loop engineering — frozen goals, independent "
+                     "verifiers, one action per turn, and multi-armed stops — with real prompts and quick quizzes.",
+                path="learn.html")
 
 
 # ---- Automation section -----------------------------------------------------
@@ -2715,6 +2909,52 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
   .cmp-pickers,.cmp-grid{grid-template-columns:1fr}
   .cmp-diff-row{grid-template-columns:1fr}
 }
+
+/* ---- Learn ---- */
+.learn-page{max-width:760px}
+.learn-progress{position:sticky;top:8px;z-index:5;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;margin:0 0 28px}
+.learn-bar{flex:1 1 180px;height:8px;background:color-mix(in srgb,var(--line) 60%,transparent);border-radius:999px;overflow:hidden;min-width:120px}
+.learn-bar-fill{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .4s ease}
+.motion-ok .learn-bar-fill{transition:width .4s ease}
+.learn-count{font-family:var(--mono);font-size:.82rem;color:var(--ink-soft);white-space:nowrap}
+.learn-reset{font-size:.78rem;border:1px solid var(--line);background:transparent;color:var(--muted);
+  border-radius:999px;padding:4px 10px;cursor:pointer}
+.learn-reset:hover{border-color:var(--warm,#c4622d);color:var(--warm,#c4622d)}
+.lesson{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);padding:22px 24px;margin:0 0 20px}
+.lesson.done{border-color:color-mix(in srgb,var(--action,#2c7) 45%,var(--line))}
+.lesson-head{display:flex;align-items:center;gap:12px;margin:0 0 14px}
+.lesson-num{flex:0 0 auto;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
+  background:var(--accent);color:#fff;font-family:var(--mono);font-size:.9rem;font-weight:700}
+.lesson.done .lesson-num{background:var(--action,#2c7)}
+.lesson-title{margin:0;font-size:1.22rem;flex:1 1 auto}
+.lesson-done{font-family:var(--mono);font-size:.74rem;color:var(--action,#2c7);font-weight:700}
+.lesson-body>p{line-height:1.65}
+.learn-quote{border-left:3px solid var(--accent);margin:14px 0;padding:8px 0 8px 16px;color:var(--ink-soft);line-height:1.6}
+.learn-quote strong{color:var(--ink)}
+.learn-aps{line-height:1.6;color:var(--ink-soft)} .learn-aps li{margin:4px 0}
+.learn-ex{margin:16px 0}
+.learn-ex-label{display:block;font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:6px}
+.learn-ex-card{display:block;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--bg)}
+.learn-ex-card:hover{border-color:var(--accent);text-decoration:none}
+.learn-ex-fam{display:block;font-family:var(--mono);font-size:.72rem;color:var(--accent-ink)}
+.learn-ex-title{display:block;font-weight:600;margin:2px 0}
+.learn-ex-when{display:block;font-size:.85rem;color:var(--ink-soft)}
+.quiz{margin:18px 0 4px;border-top:1px dashed var(--line-strong);padding-top:16px}
+.quiz-h{margin:0 0 8px;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-family:var(--mono)}
+.quiz-q{font-weight:600;margin:0 0 12px}
+.quiz-opts{display:flex;flex-direction:column;gap:8px}
+.quiz-opt{text-align:left;padding:11px 14px;border:1px solid var(--line-strong);border-radius:10px;
+  background:var(--bg);color:var(--ink);font-size:.95rem;cursor:pointer;transition:border-color .15s,background .15s}
+.quiz-opt:hover:not(:disabled){border-color:var(--accent)}
+.quiz-opt:disabled{cursor:default}
+.quiz-opt.correct{border-color:var(--action,#2c7);background:color-mix(in srgb,var(--action,#2c7) 12%,var(--bg));font-weight:600}
+.quiz-opt.wrong{border-color:var(--warm,#c4622d);background:color-mix(in srgb,var(--warm,#c4622d) 10%,var(--bg))}
+.quiz-opt.is-answer{border-color:var(--action,#2c7)}
+.quiz-opt .mark{float:right;font-weight:700}
+.quiz-explain{margin:12px 0 0;padding:12px 14px;border-radius:10px;background:var(--bg);
+  border:1px solid var(--line);line-height:1.6;font-size:.92rem}
+.learn-cta{margin:16px 0 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 """
 
 JS = r"""'use strict';
@@ -3566,6 +3806,61 @@ var PROMPTOS = (function () {
       run();}
   });
 })();
+
+/* ===================== LEARN (course progress + quizzes) ===================== */
+(function () {
+  var page = document.querySelector('.learn-page'); if (!page) return;
+  var KEY = 'promptos_learn_v1';
+  var lessons = [].slice.call(page.querySelectorAll('.lesson'));
+  var total = lessons.length;
+  var fill = document.getElementById('learnFill'), count = document.getElementById('learnCount'),
+      resetBtn = document.getElementById('learnReset');
+  function load(){ try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e){ return {}; } }
+  function save(s){ try { localStorage.setItem(KEY, JSON.stringify(s)); } catch(e){} }
+  var state = load();
+  function progress(){
+    var done = lessons.filter(function(l){ return state[l.getAttribute('data-lesson')]; }).length;
+    if (fill) fill.style.width = (total ? Math.round(done/total*100) : 0) + '%';
+    if (count) count.textContent = done + ' of ' + total + ' checks complete' +
+      (done === total && total ? ' — nicely done.' : '');
+    if (resetBtn) resetBtn.hidden = done === 0;
+  }
+  function reveal(lesson, quiz){
+    var correctIdx = parseInt(quiz.getAttribute('data-correct'), 10);
+    var opts = [].slice.call(quiz.querySelectorAll('.quiz-opt'));
+    opts.forEach(function(o){
+      o.disabled = true;
+      if (parseInt(o.getAttribute('data-i'), 10) === correctIdx){
+        o.classList.add('is-answer');
+        if (!o.querySelector('.mark')) { var m=document.createElement('span'); m.className='mark'; m.textContent='✓'; o.appendChild(m); }
+      }
+    });
+    var ex = quiz.querySelector('.quiz-explain'); if (ex) ex.hidden = false;
+    lesson.classList.add('done');
+    var badge = lesson.querySelector('.lesson-done'); if (badge){ badge.hidden = false; badge.removeAttribute('aria-hidden'); }
+  }
+  lessons.forEach(function(lesson){
+    var id = lesson.getAttribute('data-lesson');
+    var quiz = lesson.querySelector('.quiz'); if (!quiz) return;
+    var correctIdx = parseInt(quiz.getAttribute('data-correct'), 10);
+    if (state[id]) { reveal(lesson, quiz); return; }   // replay saved answer
+    var opts = [].slice.call(quiz.querySelectorAll('.quiz-opt'));
+    opts.forEach(function(o){
+      o.addEventListener('click', function(){
+        if (o.disabled) return;
+        var picked = parseInt(o.getAttribute('data-i'), 10), ok = picked === correctIdx;
+        o.classList.add(ok ? 'correct' : 'wrong');
+        reveal(lesson, quiz);
+        state[id] = { answered: true, correct: ok }; save(state); progress();
+      });
+    });
+  });
+  if (resetBtn) resetBtn.addEventListener('click', function(){
+    try { localStorage.removeItem(KEY); } catch(e){}
+    location.reload();
+  });
+  progress();
+})();
 """
 
 
@@ -3612,7 +3907,7 @@ def build():
 
     # analysis (deterministic)
     stats = corpus_stats(prompts)
-    stats["generated_pages"] = 13 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
+    stats["generated_pages"] = 14 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)
     related = build_related(prompts)
     # optional authored pattern reference docs (produced by the pattern workflow); seed
     # blurbs are used when absent, so the site is complete with or without them.
@@ -3660,6 +3955,7 @@ def build():
     (SITE / "find.html").write_text(render_find(), encoding="utf-8")
     (SITE / "lab.html").write_text(render_lab(), encoding="utf-8")
     (SITE / "compare.html").write_text(render_compare(), encoding="utf-8")
+    (SITE / "learn.html").write_text(render_learn(prompts, principles), encoding="utf-8")
     (SITE / "evolve.html").write_text(render_evolution(), encoding="utf-8")
     (SITE / "loops.html").write_text(render_loops(prompts), encoding="utf-8")
     (SITE / "automation.html").write_text(render_automation_index(), encoding="utf-8")
@@ -3676,7 +3972,7 @@ def build():
             render_pattern_page(key, name, role, blurb, prompts, pat_docs.get(key, {})), encoding="utf-8")
 
     sitemap_urls = write_sitemap_and_robots()
-    total_pages = 13 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
+    total_pages = 14 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
     print(f"  parsed {n} prompts across {len(FAMILIES)} families ({starters} in starter set)")
     print(f"  wrote {total_pages} HTML pages + prompts.json + sitemap.xml + robots.txt + style.css + app.js -> {SITE.relative_to(ROOT)}/")
     if sitemap_urls != total_pages:

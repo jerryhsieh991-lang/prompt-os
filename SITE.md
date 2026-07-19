@@ -12,7 +12,7 @@ cd site && python3 -m http.server 8199
 # open http://127.0.0.1:8199/
 ```
 
-The generator currently writes 224 HTML pages, plus `data/prompts.json`, `sitemap.xml`,
+The generator currently writes 225 HTML pages, plus `data/prompts.json`, `sitemap.xml`,
 `robots.txt`, `assets/style.css`, and `assets/app.js`. `site/` is generated output:
 re-run `build_site.py` after editing any `loops/*.md`; the site stays in sync with the
 source of truth. Nothing is hand-written per prompt.
@@ -24,6 +24,7 @@ source of truth. Nothing is hand-written per prompt.
 | `index.html` | Home - hero, a live color-coded anatomy of one real prompt, starter set, family grid, and corpus stats. |
 | `find.html` | Natural-language prompt finder over the full corpus. |
 | `lab.html` | Paste your own prompt; the same client-side engine analyzes its anatomy, patterns, verifier, complexity, and flags missing loop structure. |
+| `learn.html` | Grounded micro-course + quizzes on loop engineering, drawn from the library's own principles; progress saved client-side. |
 | `compare.html` | Two prompts side by side — shared vs unique patterns, verifier, complexity, exits, anatomy. Pick from the library or paste your own. |
 | `library.html` | All 158 prompts. Client-side search + filters (family, verifier type, model tier, starter). No server. |
 | `patterns.html` | Pattern index and counts for recurring loop mechanisms. |
@@ -57,7 +58,7 @@ All content originates from this repository's loop library, generated through mu
 authoring with adversarial verification and human review. The site preserves that provenance on
 every prompt's **Source** tab; it does not claim ownership or present reconstructions as originals.
 
-<!-- Counts verified 2026-07-19 from `python3 build_site.py`: 158 prompts, 26 families, 224 HTML pages (incl. /lab and /compare). -->
+<!-- Counts verified 2026-07-19 from `python3 build_site.py`: 158 prompts, 26 families, 225 HTML pages (incl. /lab and /compare). -->
 
 ## Client-side analysis engine (`/lab` and `/compare`)
 
