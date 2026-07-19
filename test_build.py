@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 import unittest
+import xml.etree.ElementTree as ET
+from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -81,6 +83,53 @@ class A11yCollector(HTMLParser):
         if tag == "button" and self._button_stack:
             attrs, parts = self._button_stack.pop()
             self.buttons.append((attrs, " ".join("".join(parts).split())))
+
+
+class SeoCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.html_lang = ""
+        self.charset = ""
+        self.title = ""
+        self.meta: dict[str, str] = {}
+        self.links: dict[str, str] = {}
+        self.body_refs: list[tuple[str, str]] = []
+        self._in_title = False
+        self._in_body = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = dict(attrs)
+        if tag == "html":
+            self.html_lang = attr_map.get("lang") or ""
+        elif tag == "body":
+            self._in_body = True
+        elif tag == "title":
+            self._in_title = True
+        elif tag == "meta":
+            if attr_map.get("charset"):
+                self.charset = attr_map.get("charset") or ""
+            key = attr_map.get("name") or attr_map.get("property")
+            if key:
+                self.meta[key] = attr_map.get("content") or ""
+        elif tag == "link":
+            rel = attr_map.get("rel")
+            if rel:
+                self.links[rel] = attr_map.get("href") or ""
+
+        if self._in_body:
+            for attr in ("href", "src"):
+                if attr_map.get(attr):
+                    self.body_refs.append((tag, attr_map[attr] or ""))
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+        elif tag == "body":
+            self._in_body = False
 
 
 class BuildSiteTests(unittest.TestCase):
@@ -231,6 +280,57 @@ class BuildSiteTests(unittest.TestCase):
         library = (build_site.SITE / "library.html").read_text(encoding="utf-8")
         self.assertIn('aria-label="Search prompts"', library)
         self.assertIn('id="count" class="lib-count" role="status"', library)
+
+    def test_generated_pages_have_share_metadata(self) -> None:
+        descriptions: list[str] = []
+        for path in build_site.SITE.rglob("*.html"):
+            parser = SeoCollector()
+            parser.feed(path.read_text(encoding="utf-8"))
+            rel = path.relative_to(build_site.SITE).as_posix()
+            expected_url = build_site.absolute_url(rel)
+            desc = parser.meta.get("description", "").strip()
+            descriptions.append(desc)
+            with self.subTest(path=rel):
+                self.assertEqual("en", parser.html_lang)
+                self.assertEqual("utf-8", parser.charset.lower())
+                self.assertEqual("width=device-width, initial-scale=1", parser.meta.get("viewport"))
+                self.assertGreater(len(desc), 20)
+                self.assertEqual(expected_url, parser.links.get("canonical"))
+                self.assertEqual(parser.title.strip(), parser.meta.get("og:title"))
+                self.assertEqual(desc, parser.meta.get("og:description"))
+                self.assertEqual("website", parser.meta.get("og:type"))
+                self.assertEqual(expected_url, parser.meta.get("og:url"))
+                self.assertEqual("prompt-os", parser.meta.get("og:site_name"))
+                self.assertEqual("summary", parser.meta.get("twitter:card"))
+
+                absolute_body_refs = [
+                    ref for _tag, ref in parser.body_refs
+                    if ref.startswith(build_site.BASE_URL)
+                ]
+                self.assertEqual([], absolute_body_refs)
+
+        duplicates = [desc for desc, count in Counter(descriptions).items() if count > 1]
+        self.assertEqual([], duplicates)
+
+    def test_sitemap_and_robots(self) -> None:
+        html_files = sorted(build_site.SITE.rglob("*.html"))
+        expected_urls = {
+            build_site.absolute_url(path.relative_to(build_site.SITE).as_posix())
+            for path in html_files
+        }
+
+        sitemap_path = build_site.SITE / "sitemap.xml"
+        self.assertTrue(sitemap_path.exists())
+        root = ET.parse(sitemap_path).getroot()
+        namespace = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        urls = {node.text for node in root.findall(".//sm:loc", namespace)}
+        self.assertEqual(len(html_files), len(urls))
+        self.assertEqual(expected_urls, urls)
+
+        robots = (build_site.SITE / "robots.txt").read_text(encoding="utf-8")
+        self.assertIn("User-agent: *", robots)
+        self.assertIn("Allow: /", robots)
+        self.assertIn(f"Sitemap: {build_site.absolute_url('sitemap.xml')}", robots)
 
 
 if __name__ == "__main__":

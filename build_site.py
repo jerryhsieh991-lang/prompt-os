@@ -28,10 +28,12 @@ import math
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import urljoin
 
 ROOT = Path(__file__).resolve().parent
 LOOPS = ROOT / "loops"
 SITE = ROOT / "site"
+BASE_URL = "https://jerryhsieh991-lang.github.io/prompt-os/"
 ASSET_VER = "0"  # content hash of CSS+JS, set in build() for cache-busting
 CORPUS_PROMPT_COUNT = 0  # set in build(); used by shared page chrome
 
@@ -868,8 +870,19 @@ def corpus_stats(prompts: list[dict]) -> dict:
 # HTML rendering
 # ----------------------------------------------------------------------------
 
-def page(title: str, body: str, prefix: str, *, desc: str = "", extra_head: str = "") -> str:
+def absolute_url(path: str) -> str:
+    clean = path.lstrip("/")
+    if clean in ("", "index.html"):
+        return BASE_URL.rstrip("/") + "/"
+    return urljoin(BASE_URL, clean)
+
+
+def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head: str = "") -> str:
     prompt_count = CORPUS_PROMPT_COUNT or "All"
+    description = re.sub(r"\s+", " ", desc).strip()
+    if not description:
+        raise ValueError(f"empty meta description for {path}")
+    url = absolute_url(path)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -877,7 +890,14 @@ def page(title: str, body: str, prefix: str, *, desc: str = "", extra_head: str 
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>document.documentElement.classList.add('js');try{{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('motion-ok');}}catch(e){{}}</script>
 <title>{html.escape(title)}</title>
-<meta name="description" content="{html.escape(desc)}">
+<meta name="description" content="{html.escape(description)}">
+<link rel="canonical" href="{html.escape(url)}">
+<meta property="og:title" content="{html.escape(title)}">
+<meta property="og:description" content="{html.escape(description)}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{html.escape(url)}">
+<meta property="og:site_name" content="prompt-os">
+<meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233a4ce0'/%3E%3Cpath d='M11 16a5 5 0 1 1 5 5' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M16 17l-5 4v-8z' fill='white'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="{prefix}assets/style.css?v={ASSET_VER}">
 {extra_head}
@@ -932,6 +952,25 @@ def json_for_script(value) -> str:
             .replace(">", "\\u003e")
             .replace("\u2028", "\\u2028")
             .replace("\u2029", "\\u2029"))
+
+
+def write_sitemap_and_robots() -> int:
+    html_paths = sorted(SITE.rglob("*.html"))
+    urls = [absolute_url(path.relative_to(SITE).as_posix()) for path in html_paths]
+    sitemap = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "".join(f"  <url><loc>{html.escape(url)}</loc></url>\n" for url in urls)
+        + "</urlset>\n"
+    )
+    (SITE / "sitemap.xml").write_text(sitemap, encoding="utf-8")
+    (SITE / "robots.txt").write_text(
+        "User-agent: *\n"
+        "Allow: /\n"
+        f"Sitemap: {absolute_url('sitemap.xml')}\n",
+        encoding="utf-8",
+    )
+    return len(urls)
 
 
 def facet_chips(p: dict) -> str:
@@ -1101,7 +1140,8 @@ def render_detail(p: dict, related_list: list) -> str:
 </div>
 """
     return page(f"{p['display_title']} · prompt-os", body, prefix,
-                desc=p["when"][:180])
+                desc=p["when"][:180],
+                path=f"prompt/{p['id']}.html")
 
 
 # ---- Home -------------------------------------------------------------------
@@ -1221,7 +1261,8 @@ def render_home(prompts: list[dict], principles: dict, stats: dict) -> str:
 """
     return page("prompt-os · loop-prompt library", body, "",
                 desc=f"{stats['total']} agent-loop prompts across {stats['families']} families, each with an explicit stop condition. "
-                     "Learn the anatomy of reliable AI loops.")
+                     "Learn the anatomy of reliable AI loops.",
+                path="index.html")
 
 
 # ---- Pattern explorer -------------------------------------------------------
@@ -1250,7 +1291,8 @@ def render_patterns_index(stats: dict, pat_docs: dict) -> str:
 """
     return page("Patterns · prompt-os", body, "",
                 desc="The reusable loop patterns across the prompt-os corpus, with usage counts — "
-                     "commit/revert, human escalation, adversarial verification, fan-out, ratchet, and more.")
+                     "commit/revert, human escalation, adversarial verification, fan-out, ratchet, and more.",
+                path="patterns.html")
 
 
 def render_pattern_page(key: str, name: str, role: str | None, blurb: str,
@@ -1297,7 +1339,8 @@ def render_pattern_page(key: str, name: str, role: str | None, blurb: str,
 </section>
 """
     return page(f"{name} · Patterns · prompt-os", body, prefix,
-                desc=definition[:180])
+                desc=definition[:180],
+                path=f"pattern/{key}.html")
 
 
 # ---- Loop visualizer --------------------------------------------------------
@@ -1381,7 +1424,8 @@ def render_loops(prompts: list[dict]) -> str:
 """
     return page("Loops · prompt-os", body, "",
                 desc="Interactive loop visualizer — step through real agent loops (research, coding, "
-                     "prompt-improvement, debugging) and see their SUCCESS/BUDGET/NO-PROGRESS/BLOCKED exits.")
+                     "prompt-improvement, debugging) and see their SUCCESS/BUDGET/NO-PROGRESS/BLOCKED exits.",
+                path="loops.html")
 
 
 # ---- Constellation graph ----------------------------------------------------
@@ -1441,7 +1485,8 @@ def render_graph(prompts: list[dict], related: dict) -> str:
 """
     return page("Constellation · prompt-os", body, "",
                 desc="An interactive constellation of every prompt, clustered by family, with real "
-                     "relationship edges from shared patterns and curation near-duplicates.")
+                     "relationship edges from shared patterns and curation near-duplicates.",
+                path="graph.html")
 
 
 # ---- Prompt evolution -------------------------------------------------------
@@ -1516,7 +1561,8 @@ def render_evolution() -> str:
 """
     return page("Evolve · prompt-os", body, "",
                 desc="Watch one instruction evolve from a rough request into a production agent loop, "
-                     "gaining goal, verifier, loop, and a multi-armed stop one stage at a time.")
+                     "gaining goal, verifier, loop, and a multi-armed stop one stage at a time.",
+                path="evolve.html")
 
 
 # ---- Automation section -----------------------------------------------------
@@ -1569,7 +1615,8 @@ def render_automation_index() -> str:
     return page("Automation · prompt-os", body, "",
                 desc="Illustrative AI-in-the-loop automation workflows, every step typed AI vs deterministic "
                      "vs human-approval, with reliability controls — inbox triage, research digest, doc extraction, "
-                     "anomaly alerting, and more.")
+                     "anomaly alerting, and more.",
+                path="automation.html")
 
 
 def render_automation_page(a: dict, doc: dict) -> str:
@@ -1641,7 +1688,8 @@ def render_automation_page(a: dict, doc: dict) -> str:
   tools, and keep the human/validation gates where money or irreversible actions are involved.</p>
 </section>
 """
-    return page(f"{a['name']} · Automation · prompt-os", body, prefix, desc=goal[:180])
+    return page(f"{a['name']} · Automation · prompt-os", body, prefix, desc=goal[:180],
+                path=f"automation/{a['key']}.html")
 
 
 # ---- Library ----------------------------------------------------------------
@@ -1677,6 +1725,7 @@ def render_library() -> str:
 """
     return page("Library · prompt-os", body, "",
                 desc=f"Searchable library of {CORPUS_PROMPT_COUNT} agent-loop prompts.",
+                path="library.html",
                 extra_head='<link rel="preload" href="data/prompts.json" as="fetch" crossorigin>')
 
 
@@ -1724,7 +1773,8 @@ def render_anatomy_page(principles: dict, prompts: list[dict]) -> str:
 """
     return page("Anatomy · prompt-os", body, "",
                 desc="The universal anatomy of a reliable agent loop: frozen goal, one action, "
-                     "independent verifier, multi-armed stop — plus 11 principles and the antipatterns.")
+                     "independent verifier, multi-armed stop — plus 11 principles and the antipatterns.",
+                path="anatomy.html")
 
 
 # ---- Family page ------------------------------------------------------------
@@ -1756,7 +1806,8 @@ def render_family(key: str, title: str, prompts: list[dict]) -> str:
 </section>
 """
     return page(f"{title} · prompt-os", body, prefix,
-                desc=f"{len(fam)} {title} loop prompts.")
+                desc=f"{len(fam)} {title} loop prompts.",
+                path=f"family/{key}.html")
 
 
 # ---- Glossary + Families index ---------------------------------------------
@@ -1836,7 +1887,8 @@ def render_glossary() -> str:
 """
     return page("Glossary · prompt-os", body, "",
                 desc="A glossary of agent-loop and prompt-engineering terms — frozen goal, "
-                     "independent verifier, multi-armed stop, Goodhart, ratchet, saturation, and more.")
+                     "independent verifier, multi-armed stop, Goodhart, ratchet, saturation, and more.",
+                path="glossary.html")
 
 
 def render_families_index(prompts: list[dict]) -> str:
@@ -1849,7 +1901,7 @@ def render_families_index(prompts: list[dict]) -> str:
     )
     body = f"""
 <section class="wrap">
-  <h1 class="section-h">The 14 loop families</h1>
+  <h1 class="section-h">The {len(FAMILIES)} loop families</h1>
   <p class="section-sub">Every family is the same meta-shape — frozen goal → one action → independent
   verifier → multi-armed stop — specialized to a kind of work. The original families have 8 prompts each;
   newer ones (image generation, RAG, browser agents) are still growing.</p>
@@ -1857,9 +1909,9 @@ def render_families_index(prompts: list[dict]) -> str:
 </section>
 """
     return page("Families · prompt-os", body, "",
-                desc="The 14 agent-loop families in prompt-os — build, debug, red-team, refactor, "
-                     "research, planning, testing, review, self-critique, migration, eval, orchestration, "
-                     "prompt-optimization, data-pipeline.")
+                desc=f"The {len(FAMILIES)} agent-loop families in prompt-os, from build/verify and debugging "
+                     "to RAG, browser agents, SQL analytics, tool use, memory, extraction, and video generation.",
+                path="families.html")
 
 
 # ----------------------------------------------------------------------------
@@ -2988,9 +3040,12 @@ def build():
         (SITE / "pattern" / f"{key}.html").write_text(
             render_pattern_page(key, name, role, blurb, prompts, pat_docs.get(key, {})), encoding="utf-8")
 
+    sitemap_urls = write_sitemap_and_robots()
     total_pages = 10 + len(prompts) + len(FAMILIES) + len(PATTERN_META) + len(AUTOMATIONS)  # +patterns,+automation,+loops,+graph
     print(f"  parsed {n} prompts across {len(FAMILIES)} families ({starters} in starter set)")
-    print(f"  wrote {total_pages} HTML pages + prompts.json + style.css + app.js -> {SITE.relative_to(ROOT)}/")
+    print(f"  wrote {total_pages} HTML pages + prompts.json + sitemap.xml + robots.txt + style.css + app.js -> {SITE.relative_to(ROOT)}/")
+    if sitemap_urls != total_pages:
+        print(f"  ! WARNING: sitemap URL count {sitemap_urls} != generated page count {total_pages}")
     print(f"  open: {SITE / 'index.html'}")
 
 
