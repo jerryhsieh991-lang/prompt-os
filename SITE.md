@@ -49,6 +49,10 @@ source of truth. Nothing is hand-written per prompt.
   carry-forward state, stop arms), so both blank-line and dense prompts decompose.
 - **Facets** are derived signals: verifier type, model-tier hint, length, starter membership,
   and recurring patterns. There is deliberately no fabricated quality score.
+- The **home hero** is a dark deep-space band with a real-time 3D loop rendered in **raw WebGL**
+  (zero dependencies): a glowing ring of loop-stage nodes with a comet pulse orbiting it. It pauses
+  when offscreen/hidden and falls back to a static SVG ring for reduced-motion / no-WebGL / no-JS.
+  The rest of the site keeps its warm, fast, readable theme.
 - Output is static HTML + CSS + JS only: no tracking, no external requests, and deployable to
   GitHub Pages under the `/prompt-os/` subpath with relative internal links.
 

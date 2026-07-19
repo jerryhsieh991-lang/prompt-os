@@ -1248,34 +1248,28 @@ def render_home(prompts: list[dict], principles: dict, stats: dict) -> str:
         for p in starters
     )
     body = f"""
-<section class="hero">
-  <div class="wrap">
-    <p class="kicker">prompt-os · loop-prompt library</p>
-    <h1>Understand how powerful AI prompts <span class="hl-hand">actually work</span>.</h1>
-    <p class="sub">Explore {stats['total']} verified prompts — their internal anatomy, validation
-    systems, loops, stopping conditions, and automation patterns. Every one is a
-    <em>frozen goal → one action → independent verifier → multi-armed stop</em>.</p>
-    <p class="hero-icp">For engineers building AI agents and loops: a working reference for prompts that
-    <strong>finish, check their own work, and can't loop forever</strong> — and a
-    <a href="lab.html">Lab</a> to X-ray your <em>own</em> prompt the same way.</p>
-    <div class="cta-row">
-      <a class="btn btn-primary" href="find.html">Find your prompt</a>
-      <a class="btn btn-ghost" href="lab.html">Analyze your prompt</a>
-      <a class="btn btn-ghost" href="library.html">Browse the library</a>
-    </div>
-
-    <div class="hero-anim" id="heroAnim">
-      <div class="hero-typed" data-text="Research this topic and build the best solution.">Research this topic and build the best solution.</div>
-      <div class="hero-chips" aria-hidden="true">
-        <span class="hero-chip c-goal" style="--i:0">Goal</span>
-        <span class="hero-chip c-context" style="--i:1">Context</span>
-        <span class="hero-chip c-process" style="--i:2">Process</span>
-        <span class="hero-chip c-verifier" style="--i:3">Verifier</span>
-        <span class="hero-chip c-stop" style="--i:4">Exit</span>
+<section class="hero hero-dark">
+  <div class="hero-stars" aria-hidden="true"></div>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="kicker">prompt-os · loop-prompt library</p>
+      <h1>Understand how powerful AI prompts <span class="hl-hand">actually work</span>.</h1>
+      <p class="sub">Explore {stats['total']} verified prompts — their internal anatomy, validation
+      systems, loops, stopping conditions, and automation patterns. Every one is a
+      <em>frozen goal → one action → independent verifier → multi-armed stop</em>.</p>
+      <p class="hero-icp">For engineers building AI agents and loops: a working reference for prompts that
+      <strong>finish, check their own work, and can't loop forever</strong> — and a
+      <a href="lab.html">Lab</a> to X-ray your <em>own</em> prompt the same way.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="find.html">Find your prompt</a>
+        <a class="btn btn-ghost" href="lab.html">Analyze your prompt</a>
+        <a class="btn btn-ghost" href="library.html">Browse the library</a>
       </div>
-      {hero_ring_svg()}
-      <div class="hero-cap">Research → Extract → Verify → Find gaps → Search again → Synthesize</div>
-      <button class="hero-replay" hidden>↻ Replay</button>
+    </div>
+    <div class="hero-viz" id="heroViz">
+      <canvas class="hero-gl" id="heroGL" aria-hidden="true" hidden></canvas>
+      <div class="hero-gl-fallback" id="heroFallback">{hero_ring_svg()}</div>
+      <p class="hero-loop-cap" aria-hidden="true"><span>goal</span><span>action</span><span>verify</span><span>decide</span><span>stop</span></p>
     </div>
   </div>
 </section>
@@ -2955,6 +2949,56 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .quiz-explain{margin:12px 0 0;padding:12px 14px;border-radius:10px;background:var(--bg);
   border:1px solid var(--line);line-height:1.6;font-size:.92rem}
 .learn-cta{margin:16px 0 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+
+/* ---- Hero: dark "deep-space" 3D band (body stays warm) ---- */
+.hero-dark{--hero-fg:#eef1f8;--hero-dim:#a6b0cb;
+  background:radial-gradient(125% 100% at 76% 16%,#16214d 0%,#0d1430 46%,#070a17 100%);
+  color:var(--hero-fg);position:relative;overflow:hidden;padding:88px 0 66px;border-bottom:1px solid rgba(255,255,255,.09)}
+.hero-dark .wrap{position:relative;z-index:2}
+.hero-stars{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.7;
+  background-image:
+    radial-gradient(1.4px 1.4px at 12% 24%,rgba(255,255,255,.55),transparent),
+    radial-gradient(1.2px 1.2px at 68% 14%,rgba(180,205,255,.5),transparent),
+    radial-gradient(1px 1px at 42% 62%,rgba(255,255,255,.4),transparent),
+    radial-gradient(1.3px 1.3px at 86% 48%,rgba(160,190,255,.45),transparent),
+    radial-gradient(1px 1px at 26% 82%,rgba(255,255,255,.32),transparent),
+    radial-gradient(1px 1px at 92% 78%,rgba(200,215,255,.4),transparent),
+    radial-gradient(1px 1px at 56% 34%,rgba(255,255,255,.28),transparent)}
+.hero-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:44px;align-items:center}
+.hero-copy{min-width:0}
+.hero-dark .kicker{color:#93a4dc}
+.hero-dark .kicker::after{border-top-color:var(--warm)}
+.hero-dark h1{color:var(--hero-fg)}
+.hero-dark .sub{color:var(--hero-dim)}
+.hero-dark .sub em{color:#d3dcf6;font-family:var(--mono);font-size:.92em}
+.hero-dark .hero-icp{color:var(--hero-dim)}
+.hero-dark .hero-icp strong{color:var(--hero-fg)}
+.hero-dark .hero-icp a,.hero-dark .sub a{color:#9db4ff;text-decoration-color:rgba(157,180,255,.5)}
+.hero-dark .hl-hand{text-decoration-color:var(--warm)}
+.hero-dark .btn-ghost{border-color:rgba(255,255,255,.26);color:#e3e9ff}
+.hero-dark .btn-ghost:hover{border-color:#fff;color:#fff;background:rgba(255,255,255,.07)}
+.hero-viz{position:relative;min-height:340px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.hero-gl{width:100%;max-width:440px;height:360px;display:block}
+.hero-gl[hidden]{display:none}
+.hero-gl-fallback{display:flex;align-items:center;justify-content:center;min-height:300px}
+.hero-gl-fallback .hero-ring{width:300px;height:300px}
+.hero-dark .hero-ring-path{stroke:#8fb0ff;opacity:.75;stroke-width:2.5}
+.hero-dark .hero-node circle{fill:#1b2856;stroke:#aac6ff;stroke-width:2.5}
+.hero-dark .hero-node text{fill:#c4cfe8}
+.hero-dark .hero-pulse{fill:#d6e4ff}
+.hero-loop-cap{display:flex;gap:0;flex-wrap:wrap;justify-content:center;margin:16px 0 0;
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.05em;color:#8ea0d8;text-transform:uppercase}
+.hero-loop-cap span{position:relative;padding:0 15px 0 0;margin-right:9px}
+.hero-loop-cap span::after{content:"→";position:absolute;right:0;top:0;opacity:.55}
+.hero-loop-cap span:last-child{padding-right:0;margin-right:0}
+.hero-loop-cap span:last-child::after{content:""}
+@media (max-width:820px){
+  .hero-grid{grid-template-columns:1fr;gap:22px}
+  .hero-viz{order:2;min-height:280px}
+  .hero-gl{height:300px;max-width:380px}
+  .hero-dark{padding:64px 0 48px}
+}
+@media (max-width:460px){ .hero-gl{height:250px} }
 """
 
 JS = r"""'use strict';
@@ -3860,6 +3904,125 @@ var PROMPTOS = (function () {
     location.reload();
   });
   progress();
+})();
+
+/* ===================== HERO 3D LOOP (raw WebGL, zero deps) =====================
+   A rotating 3D ring of glowing nodes (the loop stages) with a comet pulse
+   orbiting it. Additive glow over the CSS deep-space gradient. Falls back to the
+   static SVG ring for no-WebGL / reduced-motion / no-JS. Pauses when offscreen
+   or the tab is hidden. */
+(function () {
+  var canvas = document.getElementById('heroGL'); if (!canvas) return;
+  var fallback = document.getElementById('heroFallback'), viz = document.getElementById('heroViz');
+  if (!document.documentElement.classList.contains('motion-ok')) return;  // keep static SVG
+  var gl = null;
+  try { gl = canvas.getContext('webgl', {alpha:true, antialias:true, premultipliedAlpha:false})
+             || canvas.getContext('experimental-webgl', {alpha:true, premultipliedAlpha:false}); } catch(e){}
+  if (!gl) return;  // no WebGL -> static SVG stays
+
+  var VERT =
+    'attribute vec3 a_pos;uniform mat4 u_mvp;uniform float u_size;varying float v_b;' +
+    'void main(){vec4 p=u_mvp*vec4(a_pos,1.0);gl_Position=p;' +
+    'float z=p.z/p.w;v_b=clamp(0.9-0.5*z,0.28,1.35);gl_PointSize=u_size/max(p.w,0.1);}';
+  var FRAG =
+    'precision mediump float;uniform vec3 u_color;uniform float u_int;varying float v_b;' +
+    'void main(){vec2 d=gl_PointCoord-vec2(0.5);float r=length(d)*2.0;' +
+    'float a=smoothstep(1.0,0.0,r);a=pow(a,2.2);gl_FragColor=vec4(u_color*u_int*v_b,a);}';
+
+  function sh(type, src){ var s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) return null; return s; }
+  function restore(){ try{ canvas.hidden=true; }catch(e){} if(fallback) fallback.style.display=''; }
+  var vs=sh(gl.VERTEX_SHADER,VERT), fs=sh(gl.FRAGMENT_SHADER,FRAG);
+  if(!vs||!fs){ restore(); return; }
+  var prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ restore(); return; }
+  gl.useProgram(prog);
+  var A_pos=gl.getAttribLocation(prog,'a_pos');
+  var U_mvp=gl.getUniformLocation(prog,'u_mvp'), U_size=gl.getUniformLocation(prog,'u_size'),
+      U_color=gl.getUniformLocation(prog,'u_color'), U_int=gl.getUniformLocation(prog,'u_int');
+
+  // success: swap SVG fallback for the live canvas
+  canvas.hidden=false; if(fallback) fallback.style.display='none';
+
+  // ---- geometry (local space; ring in the X-Z plane, radius R) ----
+  var R=1.5, NODES=6, RINGPTS=72, STARS=130;
+  function ringPos(t){ var a=t*Math.PI*2; return [Math.cos(a)*R, 0, Math.sin(a)*R]; }
+  var ringArr=[]; for(var i=0;i<RINGPTS;i++){ var p=ringPos(i/RINGPTS); ringArr.push(p[0],p[1],p[2]); }
+  var nodeArr=[]; for(i=0;i<NODES;i++){ var q=ringPos(i/NODES); nodeArr.push(q[0],q[1],q[2]); }
+  var starArr=[]; var seed=1234567;
+  function rnd(){ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }
+  for(i=0;i<STARS;i++){ starArr.push((rnd()*2-1)*4.2,(rnd()*2-1)*3.0,(rnd()*2-1)*2.5-1.2); }
+
+  function buf(arr){ var b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW); return b; }
+  var ringBuf=buf(ringArr), nodeBuf=buf(nodeArr), starBuf=buf(starArr);
+  var pulseBuf=gl.createBuffer();   // dynamic: head + tail points, updated per frame
+
+  // ---- mat4 helpers (column-major) ----
+  function mul(a,b){ var o=new Float32Array(16),c,r,k,s;
+    for(c=0;c<4;c++)for(r=0;r<4;r++){ s=0; for(k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k]; o[c*4+r]=s; } return o; }
+  function persp(fovy,asp,n,f){ var t=1/Math.tan(fovy/2),nf=1/(n-f);
+    return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)*nf,-1, 0,0,2*f*n*nf,0]); }
+  function trans(x,y,z){ return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]); }
+  function rotX(a){ var c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]); }
+  function rotY(a){ var c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); }
+
+  var DPR=Math.min(window.devicePixelRatio||1, 2), aspect=1;
+  function resize(){ var w=canvas.clientWidth||420, h=canvas.clientHeight||360;
+    canvas.width=Math.round(w*DPR); canvas.height=Math.round(h*DPR);
+    gl.viewport(0,0,canvas.width,canvas.height); aspect=w/h; }
+  resize(); window.addEventListener('resize', resize);
+
+  function drawBuf(b, count, size, col, inten, mvp){
+    gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.enableVertexAttribArray(A_pos); gl.vertexAttribPointer(A_pos,3,gl.FLOAT,false,0,0);
+    gl.uniformMatrix4fv(U_mvp,false,mvp); gl.uniform1f(U_size,size*DPR);
+    gl.uniform3fv(U_color,col); gl.uniform1f(U_int,inten);
+    gl.drawArrays(gl.POINTS,0,count);
+  }
+
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE);  // additive glow
+  gl.clearColor(0,0,0,0);
+
+  var running=false, raf=0, t0=0;
+  function draw(ms){
+    if(!t0) t0=ms; var t=(ms-t0)/1000;
+    var spin=t*0.28, tilt=-1.02 + Math.sin(t*0.35)*0.06;
+    var pv=persp(0.9, aspect, 0.1, 100);
+    var scene=mul(pv, mul(trans(0,0,-4.6), mul(rotX(tilt), rotY(spin))));
+    var bg=mul(pv, mul(trans(0,0,-4.6), rotY(spin*0.15)));   // slow parallax starfield
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    drawBuf(starBuf, STARS, 30, [0.55,0.63,0.86], 0.5, bg);
+    drawBuf(ringBuf, RINGPTS, 44, [0.40,0.72,1.0], 0.78, scene);
+    drawBuf(nodeBuf, NODES, 200, [0.58,0.84,1.0], 1.8, scene);
+    // comet pulse: head + fading tail travelling along the ring
+    var tp=(t*0.12)%1, tail=[];
+    for(var k=0;k<6;k++){ var p=ringPos(tp - k*0.016); tail.push(p[0],p[1],p[2]); }
+    gl.bindBuffer(gl.ARRAY_BUFFER,pulseBuf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(tail),gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(A_pos); gl.vertexAttribPointer(A_pos,3,gl.FLOAT,false,0,0);
+    // tail (small, dim) then head (big, bright)
+    gl.uniformMatrix4fv(U_mvp,false,scene);
+    gl.uniform3fv(U_color,[0.78,0.94,1.0]);
+    gl.uniform1f(U_size,95*DPR); gl.uniform1f(U_int,0.9); gl.drawArrays(gl.POINTS,1,5);
+    gl.uniform1f(U_size,250*DPR); gl.uniform1f(U_int,2.3); gl.drawArrays(gl.POINTS,0,1);
+    if(running) raf=requestAnimationFrame(draw);
+  }
+  function start(){ if(running) return; running=true; t0=0; raf=requestAnimationFrame(draw); }
+  function stop(){ running=false; if(raf) cancelAnimationFrame(raf); raf=0; }
+
+  // pause when tab hidden or hero scrolled offscreen
+  document.addEventListener('visibilitychange', function(){ if(document.hidden) stop(); else if(onscreen) start(); });
+  var onscreen=true;
+  if('IntersectionObserver' in window){
+    new IntersectionObserver(function(es){ es.forEach(function(e){
+      onscreen=e.isIntersecting && e.intersectionRatio>0.08;
+      if(onscreen && !document.hidden) start(); else stop();
+    }); }, {threshold:[0,0.08,0.5]}).observe(viz);
+  } else { start(); }
+  start();
 })();
 """
 
