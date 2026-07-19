@@ -28,4 +28,9 @@ the existing analysis engine (proven safe across 3 rounds earlier tonight).
 - **Blocked on more corpus:** the session limit means launching more authoring workflows will just fail.
   Per the "don't grind failures" rule, I stopped launching batches and scheduled a resume for after the
   1am PT reset (see cron/wakeup). Everything above is committed + deployed and gated (live site verified).
-- **Still deferred (attended):** prompt-evolution diff page, page transitions — didn't get to them before the limit.
+- **~1:16am PT — session limit reset**, resumed the batch: salvaged structured-extraction (0→3),
+  video-generation (1→5), agent-memory (→3). Integrated + gated + deployed → **144 prompts / 23 families**. Live verified.
+- **Batch 5 (running):** thicken the thinnest families — tool-use, browser-agent, sql-analytics toward ~6 each.
+  After this I wind down (diminishing returns; ~13M+ subagent tokens spent tonight) and write the morning report.
+- **Still deferred (attended, on purpose):** prompt-evolution diff page + page transitions — building complex
+  JS unattended and auto-deploying to a live site is the one thing I won't risk. Ready to do these with you next session.

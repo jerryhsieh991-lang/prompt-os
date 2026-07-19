@@ -1,6 +1,6 @@
 # SQL / Analytics
 
-`sql-analytics` — 3 loop prompts.
+`sql-analytics` — 5 loop prompts.
 
 ### 1. Text-to-SQL agent-loop prompt (SQL / Analytics family)
 
@@ -128,4 +128,108 @@ STOP — halt on the FIRST that fires, checked in this order:
 4. BUDGET: turn_number reaches <MAX_ITERATIONS> without PASS. Report: current_query_text, last verdict, error_count trend, and best-guess next step for a human to pick up.
 
 Never retry the exact same query verbatim. Never let the generator's own read of correctness substitute for the verifier's schema-check + execution result.
+```
+
+### 4. Data-Quality Assertion Loop — Agent-Loop Prompt
+
+- **When:** Use when <TABLE_NAME> in <DATABASE_NAME> is failing (or is suspected to fail) a fixed set of data-quality assertions — nulls where there shouldn't be, duplicate keys, referential-integrity breaks, values outside a valid range/enum, freshness lag — and an agent should drive the table from "failing N assertions" to "passing all of them" by making one remediation change at a time, without touching the assertions themselves.
+- **Loop:** assess (read current assertion-suite report: which checks fail, on which rows) -> one action (one reversible remediation: one UPDATE/backfill scoped by a WHERE clause, one upstream transform/dbt-model fix, one constraint/dedup step) -> verify (re-run the fixed, independent assertion suite against the live table) -> decide (SUCCESS/BUDGET/NO-PROGRESS/BLOCKED)
+- **Stop:** SUCCESS: every assertion in <ASSERTION_SUITE_CMD> returns PASS against <TABLE_NAME>, reconfirmed on a second consecutive run with no assertion flapping between runs. · BUDGET: max <MAX_ITERATIONS> remediation turns (default 8); each turn is exactly one remediation action + one suite run, regardless of how many rows it touches. · NO-PROGRESS: the count of failing assertions (or, if stuck on one assertion, the count of failing rows under it) does not strictly decrease for <K_FLAT_TURNS> consecutive turns (default 3) despite a genuinely different remediation each turn. · BLOCKED: halt immediately (don't spend a turn) when: fixing a failing assertion requires a write against a table/row range outside the agent's granted scope or above <ROW_CHANGE_APPROVAL_THRESHOLD> rows; the root cause is upstream of <TABLE_NAME> (a source system or an upstream pipeline the agent can't edit) and only a human/owning team can fix it; two assertions conflict (satisfying one necessarily breaks another, e.g. a NOT NULL default vs. a range check) and only a human can pick the resolution; or the assertion suite itself appears wrong (flags rows that are actually valid per business rules) — that's a suite-definition issue, not something to patch by editing the suite mid-loop.
+- **Model:** Sonnet 5
+
+```text
+GOAL (frozen — do not renegotiate mid-loop):
+Bring <TABLE_NAME> in <DATABASE_NAME> to a state where every assertion in the FIXED, pre-existing assertion suite <ASSERTION_SUITE_CMD> (e.g. a dbt test suite, Great Expectations checkpoint, or a hand-written SQL assertion file — not-null checks, uniqueness/PK checks, referential-integrity checks against <PARENT_TABLES>, accepted-range/enum checks on <RANGE_CHECKED_COLUMNS>, freshness check on <FRESHNESS_COLUMN> within <FRESHNESS_SLA>) returns PASS, without editing the assertion suite itself to make it pass. The suite is authored and frozen BEFORE this loop starts (by a human or a prior, separate step) — the loop's job is to fix the DATA and/or the pipeline producing it, never to relax the check.
+
+INDEPENDENCE CONTRACT (must hold every turn):
+- The REMEDIATOR (you) proposes and applies one data/pipeline fix per turn.
+- The VERIFIER is <ASSERTION_SUITE_CMD> — a fixed, separately-maintained assertion runner the agent may READ (to see which checks/rows fail) but must never EDIT, disable, loosen a threshold in, or add exceptions to during this loop. If a check looks wrong, that's a BLOCKED condition to raise to a human, not something to patch.
+- Every verify step actually re-runs <ASSERTION_SUITE_CMD> against the live table state — never infer a PASS from "the UPDATE looked right" or from re-reading the remediation SQL.
+
+PER-TURN SHAPE:
+1. ASSESS — read the prior turn's assertion-suite report (or the initial report on turn 1): which named assertions FAIL, how many rows each affects, and (if available) example offending rows/keys. Pick the single failing assertion with the most rows affected (or the one blocking the others, e.g. fix referential-integrity breaks before uniqueness) as this turn's target.
+2. ONE ACTION — apply exactly one reversible remediation aimed at that target:
+   - a scoped UPDATE/backfill with an explicit WHERE clause (never an unscoped table-wide UPDATE)
+   - a fix to one upstream transform/dbt model/ETL step producing the bad values (one model, one commit)
+   - a dedup pass keyed on the declared primary/unique key
+   - a corrective cast/normalize step for one out-of-range/enum column
+   Do not bundle fixes for two different assertions in one turn — if the next verify regresses something that had passed, you need to know which single change did it. Never modify <ASSERTION_SUITE_CMD> itself.
+3. VERIFY — re-run <ASSERTION_SUITE_CMD> in full against the live table. Record: turn number, remediation applied, full pass/fail list (not just the one you targeted — a fix can regress an assertion that was previously passing), failing-row counts per still-failing assertion.
+4. DECIDE — apply the Stop line below. If none fire, update carry-forward state and proceed.
+
+APPROVAL GATE (irreversible/paid actions):
+- Any UPDATE/DELETE/backfill touching more than <ROW_CHANGE_APPROVAL_THRESHOLD> rows, any DDL (adding a constraint, altering a column type), and any change to a table outside <TABLE_NAME>'s own pipeline ownership requires explicit human approval before execution — propose the exact statement and its expected row impact, then wait.
+- If the assertion suite run itself incurs metered/paid cost above <COST_THRESHOLD> per run, surface that and get approval before each additional run beyond the first.
+
+CARRY-FORWARD STATE (compact, written every turn):
+- turn_number / <MAX_ITERATIONS>
+- failing_assertions: {assertion_name -> failing_row_count} from the latest suite run (empty dict = SUCCESS)
+- failing_count_history: [turn1_total_failing_rows, turn2_total, ...] (strictly tracked, used for NO-PROGRESS)
+- remediations_tried: list of (turn, assertion_targeted, one-line fix, verdict: fixed / regressed-another / no-effect) — ban repeating a no-effect or regressed fix verbatim
+- currently_passing_assertions (so a regression is visible immediately, not just net-count)
+- any remediation pending human approval (row-threshold or DDL)
+- suspected upstream/root-cause note if a failure looks like it originates outside <TABLE_NAME>
+
+ANTI-OSCILLATION RULE:
+Before applying a remediation, check remediations_tried: if the proposed fix exactly repeats a prior turn's fix for the same assertion, or flips the table between two states that alternately satisfy/break two conflicting assertions (A->B->A), do not apply it — count it as a forced NO-PROGRESS strike (2 strikes = HALT under NO-PROGRESS regardless of the K-turn window). A genuine retry is only valid if it targets the failure with a materially different mechanism (e.g. fixing the upstream model instead of patching rows again).
+
+STOP — halt on the FIRST that fires, checked in this order every turn:
+1. SUCCESS: <ASSERTION_SUITE_CMD> returns PASS on every assertion, reconfirmed on one additional consecutive run with identical PASS results (no flapping). Report: final failing_assertions (empty), remediations_tried log, and the reconfirming run's timestamp/output.
+2. BLOCKED: the next fix requires a write outside granted scope or over <ROW_CHANGE_APPROVAL_THRESHOLD> rows without approval; the root cause sits upstream of <TABLE_NAME> in a system the agent can't edit; two assertions are mutually exclusive and need a human tiebreak; or an assertion appears to be checking the wrong thing (business-rule mismatch) — flag it, don't silently work around it. Report: exactly what's blocking and what a human needs to decide or grant.
+3. NO-PROGRESS: total failing-row count across all assertions does not strictly decrease for <K_FLAT_TURNS> consecutive turns despite different remediation mechanisms each turn, or 2 anti-oscillation strikes accrue. Report: remediations_tried, current failing_assertions, and a recommendation for what's actually needed (e.g. "this requires an upstream fix in <SOURCE_SYSTEM>, out of this loop's scope").
+4. BUDGET: turn_number reaches <MAX_ITERATIONS> without full PASS. Report: failing_assertions remaining, failing_count_history trend, remediations_tried, and best-guess next step for a human.
+
+Never edit or relax <ASSERTION_SUITE_CMD> to reach PASS. Never let the remediator's own read of "the data looks fixed" substitute for an actual re-run of the fixed assertion suite.
+```
+
+### 5. Metric Reconciliation Across Two Independent Computation Paths — Agent-Loop Prompt
+
+- **When:** Use when <METRIC_NAME> is computed two different ways — e.g. a warehouse SQL model vs. a source-of-truth report, a new pipeline vs. the legacy one it's replacing, an aggregation query vs. a row-level recompute — and they must agree within a declared tolerance before either is trusted, and an agent should drive the two paths into agreement one change at a time without ever declaring "close enough" on its own read of the numbers.
+- **Loop:** assess (read the last reconciliation report: which slice(s) diverge, by how much, in which direction) -> one action (one reversible fix to exactly one path's logic, or a scoped filter/timezone/grain correction) -> verify (independent reconciliation script recomputes BOTH paths from scratch and diffs them — not the agent re-reading two numbers) -> decide (SUCCESS/BUDGET/NO-PROGRESS/BLOCKED)
+- **Stop:** SUCCESS: the independent reconciliation script reports |path_A - path_B| / path_B <= <TOLERANCE_PCT> (or absolute diff <= <TOLERANCE_ABS> for near-zero denominators) for <METRIC_NAME> on every slice in <RECONCILIATION_DIMENSIONS> (e.g. per day, per region, per product), over <RECONCILIATION_WINDOW>, reconfirmed on one additional consecutive run with no slice flipping. · BUDGET: max <MAX_ITERATIONS> turns (default 8); each turn is exactly one fix to one path, regardless of how many slices it touches. · NO-PROGRESS: the count of out-of-tolerance slices (or, if stuck on one slice, its absolute diff) does not strictly decrease for <K_FLAT_TURNS> consecutive turns (default 3) despite a genuinely different fix mechanism each turn. · BLOCKED: halt immediately (don't spend a turn) when: the divergence traces to a definitional difference between the two paths that has no objectively correct resolution (e.g. path A counts refunds as negative revenue, path B excludes them entirely) and only a human/business owner can pick the canonical definition; one path pulls from a source system the agent cannot edit or query further; the two paths use different time windows/timezones/currencies that cannot be normalized without a human-confirmed conversion rule; or reconciling would require a write to production data (rather than to query/model logic) without explicit approval.
+- **Model:** Sonnet 5
+
+```text
+GOAL (frozen — do not renegotiate mid-loop):
+Bring two independently-computed values of <METRIC_NAME> — PATH_A: <PATH_A_DESCRIPTION_AND_QUERY_OR_MODEL> and PATH_B: <PATH_B_DESCRIPTION_AND_QUERY_OR_MODEL> — into agreement within <TOLERANCE_PCT>% (or <TOLERANCE_ABS> absolute, whichever the metric calls for) on every slice in <RECONCILIATION_DIMENSIONS> over <RECONCILIATION_WINDOW>, WITHOUT changing the tolerance, the reconciliation script, or which path is treated as which — those are fixed before the loop starts. The loop's job is to fix whichever path's logic is wrong (or genuinely reconcile a definitional gap with human input), never to narrow the diff by loosening the check.
+
+INDEPENDENCE CONTRACT (must hold every turn):
+- The FIXER (you) proposes and applies exactly one change to one path's query/model logic (or a documented, human-approved definitional adjustment) per turn.
+- The VERIFIER is <RECONCILIATION_SCRIPT_CMD> — a separately-maintained script that, every run: (1) executes PATH_A fresh, (2) executes PATH_B fresh, (3) joins them on <RECONCILIATION_DIMENSIONS>, (4) computes the diff and pct-diff per slice, (5) reports PASS/FAIL per slice against <TOLERANCE_PCT>/<TOLERANCE_ABS>. The agent may read this script's output but must never edit its tolerance, its join keys, or which query it treats as authoritative during this loop.
+- Never accept "the two totals look close" as verification — every verify step re-runs both paths from scratch through the script. A stale number from three turns ago does not count.
+
+PER-TURN SHAPE:
+1. ASSESS — read the prior turn's reconciliation report (or the initial run on turn 1): which slices FAIL, the diff and direction (A>B or A<B) per failing slice, and whether the pattern is uniform (suggests one systematic bug, e.g. a timezone or double-count) or scattered (suggests several independent issues). Pick the single highest-impact divergent pattern as this turn's target.
+2. ONE ACTION — apply exactly one reversible change addressing that pattern, to exactly one path:
+   - fix one join/filter/grain issue in the query or model (e.g. a missing dedup, a wrong date-truncation, an inclusive/exclusive boundary)
+   - correct one unit/timezone/currency conversion
+   - fix one aggregation-level mismatch (e.g. path A sums pre-discount, path B post-discount — align to the agreed definition)
+   Change only the path implicated by this turn's pattern — do not edit both paths in the same turn, and do not touch a slice/dimension that already passed.
+3. VERIFY — run <RECONCILIATION_SCRIPT_CMD> in full (fresh execution of both paths, not cached results). Record: turn number, change made + which path, full per-slice pass/fail list (not just the targeted slice — a fix can regress a slice that previously passed), diff magnitude and direction per still-failing slice.
+4. DECIDE — apply the Stop line below. If none fire, update carry-forward state and proceed to next turn.
+
+APPROVAL GATE (irreversible/paid actions or human-only decisions):
+- If a divergence turns out to be definitional (both paths are "correct" under different, defensible definitions of <METRIC_NAME>) rather than a bug, do not silently pick one — surface both definitions and the resulting numbers, and treat as BLOCKED pending a human's canonical-definition call.
+- Any change requiring a write to production data (as opposed to query/model/view logic), or a change to a shared upstream table both paths depend on, requires explicit human approval before execution.
+- If either path's execution incurs metered/paid cost above <COST_THRESHOLD> per run, get approval before repeated runs beyond the first.
+
+CARRY-FORWARD STATE (compact, written every turn):
+- turn_number / <MAX_ITERATIONS>
+- failing_slices: {slice_key -> (diff, pct_diff, direction A>B|A<B)} from the latest reconciliation run (empty dict = SUCCESS)
+- failing_count_history: [turn1_count, turn2_count, ...] (strictly tracked, used for NO-PROGRESS)
+- fixes_tried: list of (turn, path_targeted, one-line change, verdict: fixed / regressed-another-slice / no-effect) — ban repeating a no-effect or regressed fix verbatim
+- currently_passing_slices (so a regression is visible immediately, not just net-count)
+- any suspected definitional gap flagged for human tiebreak, with both paths' numbers and reasoning stated plainly
+- any change currently pending human approval (prod write, shared upstream table, paid re-run)
+
+ANTI-OSCILLATION RULE:
+Before applying a fix, check fixes_tried: if the proposed change exactly repeats a prior turn's fix for the same slice/pattern, or flips a slice between two states that alternately satisfy path A's assumption and path B's assumption (A->B->A) without resolving which is actually correct, do not apply it — count it as a forced NO-PROGRESS strike (2 strikes = HALT under NO-PROGRESS regardless of the K-turn window). A genuine retry is only valid if it targets the divergence with a materially different mechanism (e.g. fixing the upstream source instead of re-patching the same join again).
+
+STOP — halt on the FIRST that fires, checked in this order every turn:
+1. SUCCESS: <RECONCILIATION_SCRIPT_CMD> reports every slice in <RECONCILIATION_DIMENSIONS> within <TOLERANCE_PCT>/<TOLERANCE_ABS>, reconfirmed on one additional consecutive run with identical PASS results (no slice flapping). Report: final failing_slices (empty), fixes_tried log, and the reconfirming run's timestamp/output.
+2. BLOCKED: a divergence is definitional and needs a human to pick the canonical definition of <METRIC_NAME>; one path depends on a source system the agent can't query/edit further; time window/timezone/currency normalization needs a human-confirmed rule; or the only remaining fix requires a production write or shared-table change without approval. Report: exactly what's blocking, both paths' current numbers on the disputed slice(s), and what a human needs to decide or grant.
+3. NO-PROGRESS: total out-of-tolerance slice count (or the single stuck slice's diff) does not strictly decrease for <K_FLAT_TURNS> consecutive turns despite different fix mechanisms each turn, or 2 anti-oscillation strikes accrue. Report: fixes_tried, current failing_slices, and a recommendation for what's actually needed (e.g. "this needs an upstream fix in <SOURCE_SYSTEM>, out of this loop's scope").
+4. BUDGET: turn_number reaches <MAX_ITERATIONS> without full reconciliation. Report: failing_slices remaining, failing_count_history trend, fixes_tried, and best-guess next step for a human.
+
+Never edit <RECONCILIATION_SCRIPT_CMD>'s tolerance, join keys, or authoritative-path designation to reach PASS. Never let the fixer's own read of "the numbers look close now" substitute for an actual fresh re-run of both paths through the independent reconciliation script.
 ```
