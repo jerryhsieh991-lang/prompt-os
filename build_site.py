@@ -95,6 +95,12 @@ FAMILY_DESC = {
     "security-pentest": "Authorized, defensive security testing where a finding counts only if a proof-of-concept reproduces, and a fix counts only if the PoC stops reproducing plus a regression test bites.",
     "summarization-faithful": "Summarize or synthesize so every claim traces to a source span an independent checker confirms — remove what can't be supported, surface contradictions instead of averaging them.",
     "jailbreak-hardening": "Harden guardrails against jailbreaks and prompt-injection against a frozen red-team suite, keeping a held-out set, gated on blocking attacks AND preserving benign/legitimate behavior.",
+    "dependency-upgrade": "Bump dependencies (major-version or security patch) one at a time, verified by build + typecheck + tests going green and an independent re-scan, never by weakening a test.",
+    "flaky-test-stabilization": "Make an intermittent test deterministic by fixing the one source of nondeterminism, verified by repeated runs staying green while still catching the real bug.",
+    "config-drift": "Reconcile live infrastructure/config back to the declared IaC and policy, verified by an empty plan/dry-run diff + a policy engine, with human gates on destructive changes.",
+    "cost-optimization": "Cut measured cost of a workload or LLM pipeline one lever at a time, verified by a real cost meter while a frozen SLO or quality bar keeps holding — never averaged.",
+    "compliance-audit": "Remediate a system against a frozen policy-as-code control set, verified by the policy engine or evidence checker, honest that automated controls are a floor and attestations remain open.",
+    "doc-verification": "Keep docs truthful against the code — every example runs, every documented symbol matches the real signature — verified by an example-runner or introspection diff, not a read-through.",
 }
 
 
