@@ -1134,6 +1134,11 @@ def render_detail(p: dict, related_list: list) -> str:
                     + "".join(f"<li>{html.escape(l)}</li>" for l in dup_note.splitlines())
                     + "</ul>")
 
+    skill_payload = {
+        "name": p["id"], "title": p["display_title"], "when": p["when"],
+        "family": p["family_title"], "model": p["model"], "body": p["prompt_text"],
+    }
+
     body = f"""
 <div class="wrap detail">
   <p class="crumbs"><a href="{prefix}library.html">Library</a> ›
@@ -1199,11 +1204,16 @@ def render_detail(p: dict, related_list: list) -> str:
       <dt>License</dt><dd>MIT — see LICENSE. Reuse the prompt text freely; keep this provenance note if you republish.</dd>
       <dt>Verifier type</dt><dd>{html.escape(p['verifier_type'])} — {'execution/ground-truth signal' if p['verifier_type']=='mechanical' else 'model/rubric judgment' if p['verifier_type']=='judge' else 'both mechanical and judged signals' if p['verifier_type']=='mixed' else 'not clearly specified'}.</dd>
     </dl>
+    <div class="skill-export">
+      <button class="btn btn-ghost" id="skillExport" type="button">⤓ Export as Claude Code skill</button>
+      <span class="skill-hint">saves <code>{html.escape(p['id'])}.md</code> → put it at <code>~/.claude/skills/{html.escape(p['id'])}/SKILL.md</code></span>
+    </div>
     {dup_html}
   </section>
 
   {related_html}
 </div>
+<script>window.__SKILL__={json_for_script(skill_payload)};</script>
 """
     return page(f"{p['display_title']} · prompt-os", body, prefix,
                 desc=p["when"][:180],
@@ -1699,9 +1709,15 @@ def render_lab() -> str:
   </div>
   <div class="anat-legend lab-legend" hidden>{legend}</div>
   <div id="labResults" class="lab-results" aria-live="polite"></div>
+  <div id="labRewrite" class="lab-rewrite" hidden>
+    <button class="btn btn-ghost" id="labRewriteBtn" type="button">✎ Rewrite as a compliant loop →</button>
+    <div id="labRewriteOut" class="lab-rewrite-out" aria-live="polite"></div>
+  </div>
   <p class="lab-note muted">Heuristic, not a grader — it reports the structure it can detect and flags what's
   missing (e.g. no independent verifier, no stop arms). It works best on loop/agent prompts; a generic
-  “act as X” prompt has little loop structure to find, and the analysis will honestly say so.</p>
+  “act as X” prompt has little loop structure to find, and the analysis will honestly say so. The rewrite is a
+  <strong>scaffold</strong> generated in your browser — your content slotted into the canonical loop shape with the
+  gaps marked <code>&lt;FILL: …&gt;</code>, not an AI-written finished prompt.</p>
 </section>
 """
     return page("Prompt Lab · prompt-os", body, "",
@@ -1771,7 +1787,13 @@ LEARN_MODULES = [
                           "An independent verifier", "A promise to keep going until it's perfect"],
               "correct": 3,
               "explain": "“Keep going until it's perfect” is the #1 antipattern — “perfect” is never mechanically "
-                         "true, so the loop never terminates. The fourth part is an explicit, multi-armed STOP."}},
+                         "true, so the loop never terminates. The fourth part is an explicit, multi-armed STOP."},
+     "remedial": "The four parts are: frozen goal · one action/turn · independent verifier · multi-armed stop. A vague “until perfect” is exactly what has no stop.",
+     "stretch": {"q": "What single change most reliably turns an open-ended “keep improving X” prompt into one that actually terminates?",
+                 "options": ["Add a frozen, checkable goal + a multi-armed stop closed by an independent verifier",
+                             "Tell it to try harder and be thorough", "Give it more few-shot examples", "Raise the token budget"],
+                 "correct": 0,
+                 "explain": "Termination comes from the structure: a goal that can be checked, an explicit stop, and an independent “done” signal — not from effort, examples, or budget."}},
     {"id": "frozen-goal", "title": "The frozen goal",
      "principle": ["frozen goal"],
      "example": {"id": "build-verify-1"},
@@ -1782,7 +1804,13 @@ LEARN_MODULES = [
                           "To use fewer tokens"],
               "correct": 0,
               "explain": "Freeze the goal so “done” can't drift. Redefining success downward mid-run — moving the "
-                         "goalposts — is a named antipattern; a frozen, checkable goal is what prevents it."}},
+                         "goalposts — is a named antipattern; a frozen, checkable goal is what prevents it."},
+     "remedial": "“Frozen” = the exit target means the same thing on turn 1 and turn 20. It stops the model quietly lowering the bar to “win”.",
+     "stretch": {"q": "A loop keeps reporting SUCCESS, yet the output quality visibly drifts downward over turns. The most likely cause is…",
+                 "options": ["Moving the goalposts — success is being redefined downward mid-run",
+                             "Too many stop arms", "The goal is too specific", "Not enough iterations"],
+                 "correct": 0,
+                 "explain": "If success can be re-defined mid-run, a loop can “succeed” while getting worse. A frozen, checkable goal is the fix."}},
     {"id": "one-action", "title": "One reversible action per turn",
      "principle": ["one reversible action"],
      "example": {"family": "refactor-safe"},
@@ -1793,7 +1821,13 @@ LEARN_MODULES = [
                           "It doesn't really matter"],
               "correct": 0,
               "explain": "Bundling edits destroys the observe→attribute signal: when verification fails you can't "
-                         "tell which change broke it, and rollback becomes all-or-nothing."}},
+                         "tell which change broke it, and rollback becomes all-or-nothing."},
+     "remedial": "One small reversible change per turn = you can attribute any regression to exactly one action and roll it back cleanly.",
+     "stretch": {"q": "You batch five edits per turn to move faster; the turn's verification fails. What have you actually lost?",
+                 "options": ["Attributability and a clean rollback — you can't tell which edit broke it",
+                             "Nothing, it's just faster", "Some token savings", "The frozen goal"],
+                 "correct": 0,
+                 "explain": "Batching is the antipattern: a failed verify no longer points at one cause, and revert becomes all-or-nothing."}},
     {"id": "independent-verifier", "title": "Verify with an independent signal",
      "principle": ["independent signal"],
      "example": {"pattern": "mechanical-verifier"},
@@ -1806,7 +1840,13 @@ LEARN_MODULES = [
                           "A compiler checks that it builds"],
               "correct": 1,
               "explain": "Self-grading = the producer verifies its own work with no independent signal. The "
-                         "mechanism that decides “done” must differ from the thing being optimized."}},
+                         "mechanism that decides “done” must differ from the thing being optimized."},
+     "remedial": "The thing that decides “done” must be separate from the thing being changed: tests, a scanner, a compiler, or a judge in a fresh frame.",
+     "stretch": {"q": "You tuned a model against metric M, then cite M as proof the work is done. What's the flaw?",
+                 "options": ["Goodhart — verifying with the exact signal you optimized against",
+                             "M is set too strict", "You didn't run M enough times", "The goal isn't frozen"],
+                 "correct": 0,
+                 "explain": "Beware Goodhart: don't verify with the signal you optimized. Use an independent check (or a held-out signal) the optimization never saw."}},
     {"id": "stop-arms", "title": "The four stop arms",
      "principle": ["multi-armed"],
      "example": {"id": "debug-rootcause-1"},
@@ -1815,7 +1855,12 @@ LEARN_MODULES = [
                           "Faster than a multi-armed loop", "The recommended design"],
               "correct": 1,
               "explain": "Halt on the FIRST arm that trips: SUCCESS, BUDGET (cap reached), NO-PROGRESS (metric "
-                         "flat for K turns), or BLOCKED (needs a human/resource). Success-only can't reach success → runs forever."}},
+                         "flat for K turns), or BLOCKED (needs a human/resource). Success-only can't reach success → runs forever."},
+     "remedial": "Four arms: SUCCESS · BUDGET (cap) · NO-PROGRESS (metric flat K turns) · BLOCKED (needs a human/resource). Halt on the first that trips.",
+     "stretch": {"q": "Which arm halts a loop whose metric has stalled, even though the budget isn't yet spent?",
+                 "options": ["NO-PROGRESS", "SUCCESS", "BUDGET", "BLOCKED"],
+                 "correct": 0,
+                 "explain": "NO-PROGRESS fires when the target metric hasn't improved for K turns — catching a stuck loop before BUDGET would."}},
     {"id": "non-progress", "title": "Break non-progress; escalate, don't grind",
      "principle": ["non-progress"],
      "example": {"pattern": "anti-oscillation"},
@@ -1825,7 +1870,13 @@ LEARN_MODULES = [
                           "Success — it's converging", "Budget — just add more iterations"],
               "correct": 0,
               "explain": "That's oscillation (A→B→A). Ban verbatim retries — a retry must change approach — and "
-                         "after ~3 failures fail loud and escalate with what was tried, rather than grind the budget."}},
+                         "after ~3 failures fail loud and escalate with what was tried, rather than grind the budget."},
+     "remedial": "Track the metric per turn. Flat for K turns, or an A→B→A cycle → force a strategy change or halt; after ~3 fails, escalate.",
+     "stretch": {"q": "After a failed attempt, a retry is legitimate only if it…",
+                 "options": ["changes approach — never a verbatim re-attempt of the same action",
+                             "uses a larger model", "adds a sleep and tries again", "repeats exactly, hoping for a different result"],
+                 "correct": 0,
+                 "explain": "Ban verbatim repetition of a failed action: a retry must differ in approach, or you're just oscillating and burning budget."}},
     {"id": "antipatterns", "title": "Antipatterns & your own prompt",
      "principle": None,
      "antipatterns": True,
@@ -1838,7 +1889,13 @@ LEARN_MODULES = [
                           "Carrying compact state forward instead of the full transcript"],
               "correct": 1,
               "explain": "Scope creep / gold-plating is the antipattern — the loop should close the defined gap and "
-                         "nothing else. The other three are exactly the good practices this course teaches."}},
+                         "nothing else. The other three are exactly the good practices this course teaches."},
+     "remedial": "Antipatterns share a theme: no stop, self-grading, vague goals, batching, scope creep, moving goalposts, context bloat. Close the defined gap and nothing else.",
+     "stretch": {"q": "Passing the full raw transcript to the model every turn, instead of a compact running state, causes…",
+                 "options": ["context bloat, drift, and lost budget",
+                             "faster convergence", "stronger verification", "no effect"],
+                 "correct": 0,
+                 "explain": "Carry a distilled running state (goal, tried, current best, last verifier result, budget) forward — dumping the whole transcript bloats context and drifts."}},
 ]
 
 
@@ -1901,20 +1958,33 @@ def render_learn(prompts: list[dict], principles: dict) -> str:
             f'<button class="quiz-opt" type="button" data-i="{oi}">{html.escape(o)}</button>'
             for oi, o in enumerate(q["options"])
         )
+        s = m["stretch"]
+        sopts = "".join(
+            f'<button class="quiz-opt" type="button" data-i="{oi}">{html.escape(o)}</button>'
+            for oi, o in enumerate(s["options"])
+        )
         cta_html = f'<p class="learn-cta">{m["cta"]}</p>' if m.get("cta") else ""
         lessons_html.append(f"""
 <section class="lesson" id="lesson-{m['id']}" data-lesson="{m['id']}">
   <div class="lesson-head"><span class="lesson-num">{i}</span>
     <h2 class="lesson-title">{html.escape(m['title'])}</h2>
-    <span class="lesson-done" hidden aria-hidden="true">✓ done</span></div>
+    <span class="lesson-done" hidden aria-hidden="true">✓ done</span>
+    <span class="lesson-mastered" hidden aria-hidden="true">✦ mastered</span></div>
   <div class="lesson-body">
     {concept}
     {ex_html}
-    <div class="quiz" data-correct="{q['correct']}">
+    <div class="quiz quiz-core" data-correct="{q['correct']}">
       <h3 class="quiz-h">Check yourself</h3>
       <p class="quiz-q">{html.escape(q['q'])}</p>
       <div class="quiz-opts" role="group" aria-label="Answer options">{opts}</div>
       <p class="quiz-explain" hidden>{q['explain']}</p>
+    </div>
+    <p class="quiz-remedial" hidden>💡 {html.escape(m.get('remedial',''))}</p>
+    <div class="quiz quiz-stretch" data-correct="{s['correct']}" hidden>
+      <h3 class="quiz-h">✦ Stretch — go deeper</h3>
+      <p class="quiz-q">{html.escape(s['q'])}</p>
+      <div class="quiz-opts" role="group" aria-label="Harder answer options">{sopts}</div>
+      <p class="quiz-explain" hidden>{s['explain']}</p>
     </div>
     {cta_html}
   </div>
@@ -1930,8 +2000,11 @@ def render_learn(prompts: list[dict], principles: dict) -> str:
   <div class="learn-progress" role="status" aria-live="polite">
     <div class="learn-bar"><span class="learn-bar-fill" id="learnFill" style="width:0%"></span></div>
     <span class="learn-count" id="learnCount">0 of {total} checks complete</span>
+    <span class="learn-level" id="learnLevel">Level: Foundations</span>
     <button class="learn-reset" id="learnReset" type="button" hidden>Reset progress</button>
   </div>
+  <p class="learn-adapt muted">Answer a check and its <strong>✦ stretch</strong> question unlocks. Master stretch questions to
+  level up — <strong>Practitioner</strong> unlocks the harder questions everywhere so the course keeps pace with you.</p>
   {''.join(lessons_html)}
   <p class="lab-note muted">Finished the checks? The real test is your own work — run a prompt of yours through the
   <a href="lab.html">Lab</a>, then read the underlying <a href="anatomy.html">anatomy</a> and
@@ -2890,6 +2963,12 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .lab-summary{font-size:1.02rem;margin:4px 0 16px}
 .lab-empty{padding:22px 0}
 .lab-note{margin-top:26px;font-size:.86rem;line-height:1.6}
+.lab-rewrite{margin-top:20px}
+.lab-rewrite-out{margin-top:14px}
+.lab-rewrite-note{font-size:.9rem;color:var(--ink-soft);line-height:1.55;margin:0 0 10px}
+.lab-rewrite-note code{font-size:.85em}
+.skill-export{margin-top:10px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.skill-hint{font-size:.82rem;color:var(--muted);font-family:var(--mono)}
 .anat-wrap{display:flex;flex-direction:column;gap:10px}
 .lab-flags{border:1px solid color-mix(in srgb,var(--warm,#c4622d) 45%,var(--line));
   background:color-mix(in srgb,var(--warm,#c4622d) 8%,var(--panel));border-radius:var(--radius);padding:14px 16px;margin:0 0 20px}
@@ -2962,6 +3041,17 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .quiz-explain{margin:12px 0 0;padding:12px 14px;border-radius:10px;background:var(--bg);
   border:1px solid var(--line);line-height:1.6;font-size:.92rem}
 .learn-cta{margin:16px 0 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.learn-level{font-family:var(--mono);font-size:.78rem;color:var(--accent-ink);white-space:nowrap;
+  border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:999px;padding:3px 10px}
+.learn-adapt{font-size:.86rem;line-height:1.55;margin:0 0 22px}
+.lesson-mastered{font-family:var(--mono);font-size:.74rem;color:var(--accent-ink);font-weight:700}
+.lesson.mastered{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.lesson.mastered .lesson-num{background:var(--accent)}
+.quiz-remedial{margin:12px 0 0;padding:11px 14px;border-radius:10px;line-height:1.55;font-size:.9rem;
+  background:color-mix(in srgb,var(--warm,#c4622d) 8%,var(--bg));border:1px solid color-mix(in srgb,var(--warm,#c4622d) 30%,var(--line))}
+.quiz-stretch{margin-top:16px;border-top:1px dashed var(--line-strong);padding-top:16px}
+.quiz-stretch .quiz-h{color:var(--accent-ink)}
+.quiz-stretch[hidden]{display:none}
 
 /* ---- Hero: dark "deep-space" 3D band (body stays warm) ---- */
 .hero-dark{--hero-fg:#f6f4ec;--hero-dim:#bdc4e0;
@@ -3781,9 +3871,13 @@ var PROMPTOS = (function () {
   if (!PROMPTOS) return;
   var input=document.getElementById('labInput'); if(!input) return;
   var go=document.getElementById('labGo'), clear=document.getElementById('labClear'),
-      box=document.getElementById('labResults'), legend=document.querySelector('.lab-legend');
-  var EX={};
+      box=document.getElementById('labResults'), legend=document.querySelector('.lab-legend'),
+      rw=document.getElementById('labRewrite'), rwBtn=document.getElementById('labRewriteBtn'),
+      rwOut=document.getElementById('labRewriteOut');
+  var EX={}, cur=null;
   function render(a){
+    cur=a;
+    if(rw){rw.hidden=!a.text;} if(rwOut){rwOut.innerHTML='';}
     if(!a.text){box.innerHTML='<p class="lab-empty muted">Paste a prompt above, then Analyze.</p>';if(legend)legend.hidden=true;return;}
     if(legend)legend.hidden=false;
     var html=''+
@@ -3798,10 +3892,54 @@ var PROMPTOS = (function () {
     box.innerHTML=html;
     box.scrollIntoView({behavior:'smooth',block:'nearest'});
   }
+  // deterministic scaffold: the canonical loop shape with the user's own content
+  // slotted in and every gap marked <FILL: …>. No LLM, no network.
+  function scaffoldText(a){
+    var have={}; a.roles.forEach(function(r){have[r[0]]=1;});
+    var goalSeg=(a.roles.filter(function(r){return r[0]==='goal';})[0]||[null,a.text])[1];
+    var goal=goalSeg.replace(/\s+/g,' ').trim(); if(goal.length>280) goal=goal.slice(0,280).replace(/\s+\S*$/,'')+' …';
+    var vLine=(a.verifier==='unspecified'||!have.verifier)
+      ? '<FILL: name an INDEPENDENT verifier — a check separate from whatever makes the change (a test suite, a scanner/linter, a benchmark, a schema validator, or a rubric/judge in a fresh frame). It must be able to return "not done" and must never grade its own output.>'
+      : 'Decide "done" with your '+a.verifier+' signal, run as a step separate from the action — it must not grade its own output.';
+    var arms=a.stopArms||{};
+    function arm(n,fb){ return (arms[n]&&arms[n].length>2)?arms[n]:'<FILL: '+fb+'>'; }
+    return 'GOAL (frozen — do not redefine mid-loop)\n'+goal+'\n\n'+
+      'INDEPENDENT VERIFIER\n'+vLine+'\n\n'+
+      'PER-TURN SHAPE\n'+
+      '1. ASSESS — compare the current state to the goal; choose the ONE next action.\n'+
+      '2. ONE ACTION — make exactly one small, reversible change.\n'+
+      '3. VERIFY — run the independent verifier above; trust its result, not your own confidence.\n'+
+      '4. DECIDE — commit on a verified improvement, revert on regression, otherwise escalate.\n\n'+
+      'CARRY-FORWARD STATE (compact)\n'+
+      'Goal, what has been tried, current best, last verifier result, remaining budget.\n\n'+
+      'ACTION BAN\n'+
+      'Never grade your own work; never repeat a failed action verbatim (change approach); never widen the goal or weaken the check to declare victory.\n\n'+
+      'STOP — halt on the FIRST of:\n'+
+      'SUCCESS ('+arm('SUCCESS','goal met and independently verified')+') | BUDGET ('+arm('BUDGET','max turns / tokens / wall-clock reached')+') | NO-PROGRESS ('+arm('NO-PROGRESS','the metric has not improved for K turns, or it oscillates A->B->A')+') | BLOCKED ('+arm('BLOCKED','needs a human decision or an unavailable resource')+')';
+  }
+  function doRewrite(){
+    if(!cur||!cur.text) return;
+    var have={}; cur.roles.forEach(function(r){have[r[0]]=1;});
+    var kept=[], fill=[];
+    if(have.goal) kept.push('your goal'); else fill.push('a frozen goal');
+    if(cur.verifier!=='unspecified'&&have.verifier) kept.push('your '+cur.verifier+' verifier'); else fill.push('an independent verifier');
+    var na=Object.keys(cur.stopArms||{}).length;
+    if(na>=4) kept.push('all 4 stop arms'); else if(na>0) { kept.push(na+' of 4 stop arms'); fill.push((4-na)+' more stop arm'+(4-na===1?'':'s')); } else fill.push('the 4 stop arms');
+    var txt=scaffoldText(cur);
+    rwOut.innerHTML=''+
+      '<p class="lab-rewrite-note">A scaffold from your prompt'+(kept.length?' — <strong>kept:</strong> '+kept.join(', '):'')+
+      (fill.length?'. <strong>Fill</strong> the <code>&lt;FILL: …&gt;</code> gaps for: '+fill.join(', '):'')+'.</p>'+
+      '<div class="prompt-toolbar"><button class="btn btn-primary" id="labScaffoldCopy" type="button">Copy scaffold</button></div>'+
+      '<pre class="promptbody" id="labScaffold">'+PROMPTOS.esc(txt)+'</pre>';
+    var cb=document.getElementById('labScaffoldCopy');
+    cb.addEventListener('click',function(){ try{navigator.clipboard.writeText(txt);}catch(e){} cb.textContent='Copied ✓'; setTimeout(function(){cb.textContent='Copy scaffold';},1500); });
+    rwOut.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+  if(rwBtn) rwBtn.addEventListener('click',doRewrite);
   function run(){render(PROMPTOS.analyze(input.value,{}));}
   go.addEventListener('click',run);
   input.addEventListener('keydown',function(e){if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run();});
-  clear.addEventListener('click',function(){input.value='';box.innerHTML='';if(legend)legend.hidden=true;input.focus();});
+  clear.addEventListener('click',function(){input.value='';box.innerHTML='';if(legend)legend.hidden=true;if(rw)rw.hidden=true;if(rwOut)rwOut.innerHTML='';cur=null;input.focus();});
   // examples: load real corpus prompt text (with its family_key so patterns match the detail page exactly)
   var exBtns=[].slice.call(document.querySelectorAll('.lab-ex'));
   if(exBtns.length){
@@ -3810,6 +3948,41 @@ var PROMPTOS = (function () {
       exBtns.forEach(function(b){b.addEventListener('click',function(){var p=EX[b.getAttribute('data-id')];if(!p)return;input.value=p.prompt_text;render(PROMPTOS.analyze(p.prompt_text,{fk:p.family_key,model:p.model}));});});
     });
   }
+})();
+
+/* ===================== SKILL EXPORT (prompt detail -> Claude Code skill file) ===================== */
+(function () {
+  var s = window.__SKILL__, btn = document.getElementById('skillExport');
+  if (!s || !btn) return;
+  function md(){
+    var desc = (s.when||'').replace(/\s+/g,' ').trim();
+    if (desc.length>240) desc = desc.slice(0,240).replace(/\s+\S*$/,'')+'…';
+    return '---\n'+
+      'name: '+s.name+'\n'+
+      'description: '+desc+'\n'+
+      '---\n\n'+
+      '# '+s.title+'\n\n'+
+      'Use this agent-loop when: '+(s.when||'')+'\n\n'+
+      'Run it as a bounded loop — follow the prompt below exactly, and fill every <PLACEHOLDER> before you start:\n\n'+
+      s.body+'\n\n'+
+      '---\n'+
+      'Model routing: '+(s.model||'—')+'\n'+
+      'Source: prompt-os loop library — family "'+s.family+'", prompt '+s.name+'. MIT licensed.\n';
+  }
+  btn.addEventListener('click', function(){
+    try {
+      var blob = new Blob([md()], {type:'text/markdown'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = s.name+'.md';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+      btn.textContent = 'Downloaded ✓';
+    } catch(e){
+      try { navigator.clipboard.writeText(md()); btn.textContent='Copied ✓ (save as SKILL.md)'; } catch(e2){}
+    }
+    setTimeout(function(){ btn.textContent='⤓ Export as Claude Code skill'; }, 1800);
+  });
 })();
 
 /* ===================== COMPARE (two prompts side by side) ===================== */
@@ -3871,55 +4044,72 @@ var PROMPTOS = (function () {
 /* ===================== LEARN (course progress + quizzes) ===================== */
 (function () {
   var page = document.querySelector('.learn-page'); if (!page) return;
-  var KEY = 'promptos_learn_v1';
+  var KEY = 'promptos_learn_v2';
   var lessons = [].slice.call(page.querySelectorAll('.lesson'));
   var total = lessons.length;
   var fill = document.getElementById('learnFill'), count = document.getElementById('learnCount'),
-      resetBtn = document.getElementById('learnReset');
+      levelEl = document.getElementById('learnLevel'), resetBtn = document.getElementById('learnReset');
   function load(){ try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e){ return {}; } }
-  function save(s){ try { localStorage.setItem(KEY, JSON.stringify(s)); } catch(e){} }
-  var state = load();
-  function progress(){
-    var done = lessons.filter(function(l){ return state[l.getAttribute('data-lesson')]; }).length;
-    if (fill) fill.style.width = (total ? Math.round(done/total*100) : 0) + '%';
-    if (count) count.textContent = done + ' of ' + total + ' checks complete' +
-      (done === total && total ? ' — nicely done.' : '');
-    if (resetBtn) resetBtn.hidden = done === 0;
-  }
-  function reveal(lesson, quiz){
-    var correctIdx = parseInt(quiz.getAttribute('data-correct'), 10);
-    var opts = [].slice.call(quiz.querySelectorAll('.quiz-opt'));
-    opts.forEach(function(o){
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e){} }
+  var state = load();   // { id: {core:bool, stretch:bool} }
+
+  function mastered(){ return lessons.filter(function(l){ var s=state[l.getAttribute('data-lesson')]; return s && s.stretch===true; }).length; }
+  function levelName(m){ return m>=5 ? 'Expert' : m>=2 ? 'Practitioner' : 'Foundations'; }
+  function done(){ return lessons.filter(function(l){ var s=state[l.getAttribute('data-lesson')]; return s && typeof s.core!=='undefined'; }).length; }
+
+  function revealAnswer(quiz){ if(!quiz) return;
+    var ci = parseInt(quiz.getAttribute('data-correct'),10);
+    [].slice.call(quiz.querySelectorAll('.quiz-opt')).forEach(function(o){
       o.disabled = true;
-      if (parseInt(o.getAttribute('data-i'), 10) === correctIdx){
-        o.classList.add('is-answer');
-        if (!o.querySelector('.mark')) { var m=document.createElement('span'); m.className='mark'; m.textContent='✓'; o.appendChild(m); }
-      }
+      if (parseInt(o.getAttribute('data-i'),10)===ci){ o.classList.add('is-answer');
+        if(!o.querySelector('.mark')){var m=document.createElement('span');m.className='mark';m.textContent='✓';o.appendChild(m);} }
     });
-    var ex = quiz.querySelector('.quiz-explain'); if (ex) ex.hidden = false;
-    lesson.classList.add('done');
-    var badge = lesson.querySelector('.lesson-done'); if (badge){ badge.hidden = false; badge.removeAttribute('aria-hidden'); }
+    var ex = quiz.querySelector('.quiz-explain'); if(ex) ex.hidden=false;
   }
-  lessons.forEach(function(lesson){
-    var id = lesson.getAttribute('data-lesson');
-    var quiz = lesson.querySelector('.quiz'); if (!quiz) return;
-    var correctIdx = parseInt(quiz.getAttribute('data-correct'), 10);
-    if (state[id]) { reveal(lesson, quiz); return; }   // replay saved answer
-    var opts = [].slice.call(quiz.querySelectorAll('.quiz-opt'));
-    opts.forEach(function(o){
+  function unlockStretch(lesson){ var s=lesson.querySelector('.quiz-stretch'); if(s) s.hidden=false; }
+  function showRemedial(lesson){ var r=lesson.querySelector('.quiz-remedial'); if(r) r.hidden=false; }
+  function markDone(lesson){ lesson.classList.add('done'); var b=lesson.querySelector('.lesson-done'); if(b){b.hidden=false;b.removeAttribute('aria-hidden');} }
+  function markMastered(lesson){ lesson.classList.add('mastered'); var b=lesson.querySelector('.lesson-mastered'); if(b){b.hidden=false;b.removeAttribute('aria-hidden');} }
+
+  function progress(){
+    var d=done(), m=mastered();
+    if(fill) fill.style.width = (total?Math.round(d/total*100):0)+'%';
+    if(count) count.textContent = d+' of '+total+' checks'+(d===total&&total?' — nicely done.':'');
+    if(levelEl) levelEl.textContent = 'Level: '+levelName(m)+(m?' ('+m+' mastered)':'');
+    if(resetBtn) resetBtn.hidden = (d===0 && m===0);
+    if(m>=2) lessons.forEach(unlockStretch);   // adaptive: Practitioner+ unlocks the harder questions everywhere
+  }
+
+  function wireQuiz(lesson, quiz, kind){
+    if(!quiz) return;
+    var ci = parseInt(quiz.getAttribute('data-correct'),10);
+    [].slice.call(quiz.querySelectorAll('.quiz-opt')).forEach(function(o){
       o.addEventListener('click', function(){
-        if (o.disabled) return;
-        var picked = parseInt(o.getAttribute('data-i'), 10), ok = picked === correctIdx;
-        o.classList.add(ok ? 'correct' : 'wrong');
-        reveal(lesson, quiz);
-        state[id] = { answered: true, correct: ok }; save(state); progress();
+        if(o.disabled) return;
+        var ok = parseInt(o.getAttribute('data-i'),10)===ci;
+        o.classList.add(ok?'correct':'wrong');
+        revealAnswer(quiz);
+        var id = lesson.getAttribute('data-lesson'); state[id] = state[id] || {};
+        if(kind==='core'){ state[id].core = ok; markDone(lesson);
+          if(ok) unlockStretch(lesson); else showRemedial(lesson); }
+        else { state[id].stretch = ok; if(ok) markMastered(lesson); }
+        save(); progress();
       });
     });
+  }
+  function replay(lesson, s){
+    var core = lesson.querySelector('.quiz-core'), stretch = lesson.querySelector('.quiz-stretch');
+    if(typeof s.core!=='undefined'){ revealAnswer(core); markDone(lesson);
+      if(s.core) unlockStretch(lesson); else showRemedial(lesson); }
+    if(typeof s.stretch!=='undefined'){ unlockStretch(lesson); revealAnswer(stretch); if(s.stretch) markMastered(lesson); }
+  }
+  lessons.forEach(function(lesson){
+    var s = state[lesson.getAttribute('data-lesson')];
+    if(s) replay(lesson, s);
+    if(!s || typeof s.core==='undefined') wireQuiz(lesson, lesson.querySelector('.quiz-core'), 'core');
+    if(!s || typeof s.stretch==='undefined') wireQuiz(lesson, lesson.querySelector('.quiz-stretch'), 'stretch');
   });
-  if (resetBtn) resetBtn.addEventListener('click', function(){
-    try { localStorage.removeItem(KEY); } catch(e){}
-    location.reload();
-  });
+  if(resetBtn) resetBtn.addEventListener('click', function(){ try{localStorage.removeItem(KEY);}catch(e){} location.reload(); });
   progress();
 })();
 

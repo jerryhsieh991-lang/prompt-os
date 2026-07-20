@@ -23,7 +23,7 @@ source of truth. Nothing is hand-written per prompt.
 |-------|------|
 | `index.html` | Home - hero, a live color-coded anatomy of one real prompt, starter set, family grid, and corpus stats. |
 | `find.html` | Natural-language prompt finder over the full corpus. |
-| `lab.html` | Paste your own prompt; the same client-side engine analyzes its anatomy, patterns, verifier, complexity, and flags missing loop structure. |
+| `lab.html` | Paste your own prompt; the client-side engine analyzes anatomy/patterns/verifier/complexity, flags missing loop structure, and can **rewrite it into a compliant-loop scaffold** (gaps marked `<FILL:…>`). |
 | `learn.html` | Grounded micro-course + quizzes on loop engineering, drawn from the library's own principles; progress saved client-side. |
 | `compare.html` | Two prompts side by side — shared vs unique patterns, verifier, complexity, exits, anatomy. Pick from the library or paste your own. |
 | `library.html` | All 182 prompts. Client-side search + filters (family, verifier type, model tier, starter). No server. |
@@ -38,7 +38,7 @@ source of truth. Nothing is hand-written per prompt.
 | `anatomy.html` | Universal loop anatomy: components, principles, and antipatterns parsed from the principles doc. |
 | `evolve.html` | Evolution stepper showing how prompts become more reliable. |
 | `glossary.html` | Glossary of loop-engineering terms. |
-| `prompt/<id>.html` | 182 prompt detail pages. Tabs: Prompt, Anatomy, Why it works, Source. |
+| `prompt/<id>.html` | 182 prompt detail pages. Tabs: Prompt, Anatomy, Why it works, Source (with **one-click export as a Claude Code skill**). |
 
 ## How it works
 

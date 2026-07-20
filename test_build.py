@@ -214,21 +214,27 @@ class BuildSiteTests(unittest.TestCase):
 
     def test_learn_course_is_wired_and_grounded(self) -> None:
         learn = (build_site.SITE / "learn.html").read_text(encoding="utf-8")
-        # one lesson + quiz per module, each with a valid answer index
-        self.assertEqual(len(build_site.LEARN_MODULES), learn.count('class="lesson"'))
-        correct_markers = re.findall(r'class="quiz" data-correct="(\d+)"', learn)
-        self.assertEqual(len(build_site.LEARN_MODULES), len(correct_markers))
-        for module, marker in zip(build_site.LEARN_MODULES, correct_markers):
-            self.assertLess(int(marker), len(module["quiz"]["options"]))  # answer index in range
+        n = len(build_site.LEARN_MODULES)
+        # one lesson per module; a core AND a stretch quiz per module (adaptive difficulty)
+        self.assertEqual(n, learn.count('class="lesson"'))
+        core = re.findall(r'class="quiz quiz-core" data-correct="(\d+)"', learn)
+        stretch = re.findall(r'class="quiz quiz-stretch" data-correct="(\d+)"', learn)
+        self.assertEqual(n, len(core))
+        self.assertEqual(n, len(stretch))
+        for module, cm, sm in zip(build_site.LEARN_MODULES, core, stretch):
+            self.assertLess(int(cm), len(module["quiz"]["options"]))       # core answer index in range
+            self.assertLess(int(sm), len(module["stretch"]["options"]))    # stretch answer index in range
+            self.assertTrue(module.get("remedial"))                        # every lesson has a remedial hint
         # grounded: at least one lesson quotes a real principle body verbatim
         principles = build_site.parse_principles()
         bodies = [p["body"] for p in principles["principles"]]
         self.assertTrue(any(build_site.html.escape(b[:60]) in learn for b in bodies),
                         "learn page should quote real principle text, not fabricated prose")
-        # quiz interactivity + localStorage wired in app.js
+        # adaptive quiz interactivity + localStorage wired in app.js
         js = (build_site.SITE / "assets" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("promptos_learn_v1", js)
+        self.assertIn("promptos_learn_v2", js)
         self.assertIn(".learn-page", js)
+        self.assertIn("mastered", js)
 
     def test_analysis_rules_cover_engine(self) -> None:
         rules = build_site.analysis_rules()
