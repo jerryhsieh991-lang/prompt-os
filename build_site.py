@@ -959,7 +959,11 @@ def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head
 <meta property="og:type" content="website">
 <meta property="og:url" content="{html.escape(url)}">
 <meta property="og:site_name" content="prompt-os">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="{html.escape(absolute_url('assets/og.png'))}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{html.escape(absolute_url('assets/og.png'))}">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233a4ce0'/%3E%3Cpath d='M11 16a5 5 0 1 1 5 5' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M16 17l-5 4v-8z' fill='white'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="{prefix}assets/style.css?v={ASSET_VER}">
 {extra_head}
@@ -974,6 +978,7 @@ def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head
       <a href="{prefix}lab.html">Lab</a>
       <a href="{prefix}compare.html">Compare</a>
       <a href="{prefix}learn.html">Learn</a>
+      <span class="nav-sep" aria-hidden="true"></span>
       <a href="{prefix}library.html">Library</a>
       <a href="{prefix}patterns.html">Patterns</a>
       <a href="{prefix}graph.html">Graph</a>
@@ -2429,6 +2434,8 @@ code{font-family:var(--mono);background:var(--code-bg);color:var(--code-ink);
 .site-head nav{display:flex;gap:22px;flex-wrap:wrap}
 .site-head nav a{color:var(--ink-soft);font-weight:500;font-size:.95rem}
 .site-head nav a:hover{color:var(--accent-ink);text-decoration:none}
+.nav-sep{width:1px;height:15px;background:var(--line-strong);opacity:.7;flex:0 0 auto;align-self:center}
+@media (max-width:820px){ .nav-sep{display:none} }
 .site-foot{border-top:1px solid var(--line);margin-top:64px;padding:32px 0;color:var(--ink-soft);font-size:.9rem}
 .site-foot p{margin:.4em 0;max-width:70ch}
 
@@ -4346,6 +4353,12 @@ def build():
 
     (SITE / "assets" / "style.css").write_text(CSS, encoding="utf-8")
     (SITE / "assets" / "app.js").write_text(js_final, encoding="utf-8")
+    # static social-preview image (committed source asset; used by og:image/twitter:image)
+    og_src = ROOT / "assets" / "og.png"
+    if og_src.exists():
+        shutil.copy(og_src, SITE / "assets" / "og.png")
+    else:
+        print("  ! note: assets/og.png missing — social preview image will 404 until generated")
 
     # JSON search index (trim prompt_text to keep it lean but searchable)
     index = [{

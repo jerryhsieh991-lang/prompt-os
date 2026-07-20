@@ -400,7 +400,8 @@ class BuildSiteTests(unittest.TestCase):
                 self.assertEqual("website", parser.meta.get("og:type"))
                 self.assertEqual(expected_url, parser.meta.get("og:url"))
                 self.assertEqual("prompt-os", parser.meta.get("og:site_name"))
-                self.assertEqual("summary", parser.meta.get("twitter:card"))
+                self.assertEqual("summary_large_image", parser.meta.get("twitter:card"))
+                self.assertEqual(build_site.absolute_url("assets/og.png"), parser.meta.get("og:image"))
 
                 absolute_body_refs = [
                     ref for _tag, ref in parser.body_refs
