@@ -2,6 +2,7 @@
 """Regression self-checks for the dependency-free site generator."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -636,6 +637,49 @@ class RegressionTests(unittest.TestCase):
                     untagged.append(f"{path.name}: {inner[:30]}")
         self.assertEqual([], untagged[:5],
                          "CJK text rendered inside an element with no lang attribute")
+
+    def test_keyword_matching_is_word_bounded(self) -> None:
+        """Substring matching read 'grade' inside 'upgrade'/'downgrade' and labelled
+        7 prompts as judge-verified purely for mentioning an upgrade."""
+        blob = "bump the dependency and re-run the test suite after the upgrade"
+        self.assertFalse(build_site._keyword_hit(blob, build_site.JUDGE_KEYWORDS),
+                         "'upgrade' still matches the judge keyword 'grade'")
+        self.assertTrue(build_site._keyword_hit(blob, build_site.MECH_KEYWORDS))
+        self.assertTrue(build_site._keyword_hit("the grade is assigned by a judge",
+                                                build_site.JUDGE_KEYWORDS),
+                        "a real standalone 'grade' must still match")
+
+    def test_unclassified_verifier_is_shown_not_omitted(self) -> None:
+        """Rendering no chip made 'we could not classify this' visually identical to
+        'this prompt has no verifier' — the library's most important distinction."""
+        prompts = [q for key, _ in build_site.FAMILIES for q in build_site.parse_family(key)]
+        unspecified = [q for q in prompts if q["verifier_type"] == "unspecified"]
+        self.assertTrue(unspecified, "expected some unclassified prompts in the corpus")
+        page = (build_site.SITE / "prompt" / f"{unspecified[0]['id']}.html").read_text(encoding="utf-8")
+        self.assertIn("verifier not detected", page)
+
+    def test_every_inline_script_is_csp_hashed(self) -> None:
+        """There was no CSP at all, so an escaping slip in an innerHTML sink had no
+        backstop. A stale hash silently blocks the script, so verify every page."""
+        inline = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S)
+        csp_re = re.compile(r'<meta http-equiv="Content-Security-Policy" content="([^"]*)"')
+        uncovered, pages = [], 0
+        for path in sorted(build_site.SITE.rglob("*.html")):
+            text = path.read_text(encoding="utf-8")
+            match = csp_re.search(text)
+            if not match:
+                uncovered.append(f"{path.name}: no CSP")
+                continue
+            pages += 1
+            self.assertIn("default-src 'none'", match.group(1))
+            self.assertNotIn("script-src 'self' 'unsafe-inline'", match.group(1))
+            for script in inline.finditer(text):
+                digest = hashlib.sha256(script.group(1).encode("utf-8")).digest()
+                token = "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
+                if token not in match.group(1):
+                    uncovered.append(f"{path.name}: {script.group(1)[:40]!r}")
+        self.assertEqual([], uncovered[:5])
+        self.assertGreater(pages, 0)
 
     def test_base_url_is_configurable(self) -> None:
         """A hardcoded origin meant every fork published canonical/OG/sitemap URLs

@@ -628,11 +628,17 @@ var PROMPTOS = (function () {
   var esc = pesc;
   var EXPL = new RegExp(R.explicitVerifier, 'i');
   function explicitVerifier(t){var m=t.match(EXPL);return m?m[1].trim():'';}
+  var KWB = R.keywordBoundary || '(^|[^a-z0-9])';
+  var _kwCache = {};
+  function kwHit(blob, k){
+    var re = _kwCache[k] || (_kwCache[k] = new RegExp(KWB + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    return re.test(blob);
+  }
   function deriveVerifier(text, model){
     var explicit=explicitVerifier(text);
     var blob=((model||'')+' '+(explicit||text)).toLowerCase();
-    var mech=R.mechKw.some(function(k){return blob.indexOf(k)>=0;});
-    var judge=R.judgeKw.some(function(k){return blob.indexOf(k)>=0;});
+    var mech=R.mechKw.some(function(k){return kwHit(blob,k);});
+    var judge=R.judgeKw.some(function(k){return kwHit(blob,k);});
     if(mech&&!judge)return 'mechanical';
     if(judge&&!mech)return 'judge';
     if(mech&&judge)return 'mixed';

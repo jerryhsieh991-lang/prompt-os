@@ -21,6 +21,7 @@ Run:  python3 build_site.py      # then open site/index.html
 Stdlib only.
 """
 from __future__ import annotations
+import base64
 import hashlib
 import html
 import json
@@ -205,12 +206,24 @@ JUDGE_KEYWORDS = (
 )
 
 
+# Keywords must match at a word start. Plain substring matching read "grade" inside
+# "upgrade"/"downgrade" and labelled 7 prompts as having a judge/rubric verifier purely
+# because they mentioned upgrading. The boundary is spelled with an explicit character
+# class rather than \b because the JS mirror must agree exactly, and \b disagrees
+# between Python (unicode-aware) and JavaScript (ASCII-only) next to CJK text.
+KEYWORD_BOUNDARY = r"(?:^|[^a-z0-9])"
+
+
+def _keyword_hit(blob: str, keywords) -> bool:
+    return any(re.search(KEYWORD_BOUNDARY + re.escape(k), blob) for k in keywords)
+
+
 def derive_verifier_type(model: str, prompt_text: str) -> str:
     """Honest facet: mechanical (execution ground-truth) vs judge (model/rubric)."""
     explicit = _explicit_verifier_text(prompt_text)
     blob = (model + " " + (explicit or prompt_text)).lower()
-    mechanical = any(k in blob for k in MECH_KEYWORDS)
-    judge = any(k in blob for k in JUDGE_KEYWORDS)
+    mechanical = _keyword_hit(blob, MECH_KEYWORDS)
+    judge = _keyword_hit(blob, JUDGE_KEYWORDS)
     if mechanical and not judge:
         return "mechanical"
     if judge and not mechanical:
@@ -838,6 +851,7 @@ def analysis_rules() -> dict:
         "anchors": [[role, src] for role, src in _ANCHORS],  # compiled 'gi' client-side
         # explicit VERIFIER: clause — JS-adapted (dotAll via [\s\S], \Z -> $)
         "explicitVerifier": r"\b(?:INDEPENDENT\s+)?VERIFIER\s*:\s*([\s\S]+?)(?=\n\s*\n|\s+(?:LOOP|PER-TURN|CARRY|STOP)\s*:|$)",
+        "keywordBoundary": KEYWORD_BOUNDARY.replace("(?:", "(") ,  # JS has no (?: need here
         "mechKw": list(MECH_KEYWORDS),
         "judgeKw": list(JUDGE_KEYWORDS),
         "patternMeta": [[k, n, r, b] for k, n, r, b in PATTERN_META],
@@ -952,6 +966,44 @@ def absolute_url(path: str) -> str:
     return urljoin(BASE_URL, clean)
 
 
+CHROME_SCRIPT = (
+    "document.documentElement.classList.add('js');"
+    "try{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)"
+    "document.documentElement.classList.add('motion-ok');}catch(e){}"
+)
+
+# Inline <script> blocks without a src attribute; each needs its own CSP hash.
+_INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S)
+
+
+def _script_hash(source: str) -> str:
+    digest = hashlib.sha256(source.encode("utf-8")).digest()
+    return "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
+
+
+def csp_for(*chunks: str) -> str:
+    """A per-page Content-Security-Policy that allowlists exactly this page's inline
+    scripts by hash. There was previously no CSP at all, so any future escaping slip
+    in an innerHTML sink had no backstop.
+
+    style-src-attr keeps 'unsafe-inline' only because a handful of generated elements
+    carry a style="" attribute; inline <style> blocks and inline scripts stay blocked.
+    """
+    hashes = [_script_hash(CHROME_SCRIPT)]
+    for chunk in chunks:
+        for m in _INLINE_SCRIPT_RE.finditer(chunk or ""):
+            h = _script_hash(m.group(1))
+            if h not in hashes:
+                hashes.append(h)
+    return (
+        "default-src 'none'; "
+        f"script-src 'self' {' '.join(hashes)}; "
+        "style-src 'self'; style-src-attr 'unsafe-inline'; "
+        "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+
+
 def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head: str = "") -> str:
     prompt_count = CORPUS_PROMPT_COUNT or "All"
     description = re.sub(r"\s+", " ", desc).strip()
@@ -963,7 +1015,8 @@ def page(title: str, body: str, prefix: str, *, desc: str, path: str, extra_head
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script>document.documentElement.classList.add('js');try{{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('motion-ok');}}catch(e){{}}</script>
+<meta http-equiv="Content-Security-Policy" content="{csp_for(body, extra_head)}">
+<script>{CHROME_SCRIPT}</script>
 <title>{html.escape(title)}</title>
 <meta name="description" content="{html.escape(description)}">
 <link rel="canonical" href="{html.escape(url)}">
@@ -1064,6 +1117,8 @@ def facet_chips(p: dict) -> str:
     vt = p["verifier_type"]
     if vt in ("mechanical", "judge", "mixed"):
         out.append(chip(f"{vt} verifier", f"chip-verifier chip-{vt}"))
+    else:
+        out.append(chip("verifier not detected", "chip-verifier chip-unspecified"))
     out.append(chip(f"{p['model_hint']} model", "chip-model"))
     return "".join(out)
 
