@@ -672,6 +672,9 @@ class RegressionTests(unittest.TestCase):
                 continue
             pages += 1
             self.assertIn("default-src 'none'", match.group(1))
+            # frame-ancestors is IGNORED in a <meta> CSP and logs a console error on
+            # every page load; real frame protection needs an HTTP header.
+            self.assertNotIn("frame-ancestors", match.group(1))
             self.assertNotIn("script-src 'self' 'unsafe-inline'", match.group(1))
             for script in inline.finditer(text):
                 digest = hashlib.sha256(script.group(1).encode("utf-8")).digest()

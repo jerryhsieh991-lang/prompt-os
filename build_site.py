@@ -1000,7 +1000,10 @@ def csp_for(*chunks: str) -> str:
         f"script-src 'self' {' '.join(hashes)}; "
         "style-src 'self'; style-src-attr 'unsafe-inline'; "
         "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
-        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        # frame-ancestors is deliberately absent: it is IGNORED in a <meta> CSP and
+        # logs an error on every page. Clickjacking protection needs a real HTTP
+        # header (X-Frame-Options / frame-ancestors), which GitHub Pages cannot set.
+        "base-uri 'none'; form-action 'none'"
     )
 
 
