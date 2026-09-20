@@ -57,7 +57,11 @@ source of truth. Nothing is hand-written per prompt.
   ember accent that ties the cool hero to the warm body. It pauses when offscreen/hidden and falls back
   to a static SVG ring for reduced-motion / no-WebGL / no-JS. The rest of the site keeps its warm theme.
 - Output is static HTML + CSS + JS only: no tracking, no external requests, and deployable to
-  GitHub Pages under the `/prompt-os/` subpath with relative internal links.
+  GitHub Pages under the `/prompt-os/` subpath with relative internal links. The origin used for
+  canonical/OG/sitemap URLs comes from `PROMPT_OS_BASE_URL` (default `http://localhost:8199/`).
+- `assets/style.css` and `assets/app.js` are **real files**, read at build time — not string
+  literals inside `build_site.py` — so they can be linted, syntax-checked and diffed as CSS/JS.
+  The site remains dependency-free and stdlib-only.
 
 ## Provenance
 
@@ -65,7 +69,8 @@ All content originates from this repository's loop library, generated through mu
 authoring with adversarial verification and human review. The site preserves that provenance on
 every prompt's **Source** tab; it does not claim ownership or present reconstructions as originals.
 
-<!-- Counts verified 2026-07-19 from `python3 build_site.py`: 182 prompts, 38 families, 261 HTML pages (incl. /lab and /compare). -->
+<!-- Page counts are derived from what the generator actually writes; test_build.py
+     asserts floors from corpus_baseline.json rather than hardcoded totals. -->
 
 ## Client-side analysis engine (`/lab` and `/compare`)
 
@@ -73,6 +78,10 @@ The deterministic analysis engine (anatomy segmentation, pattern detection, veri
 classification) lives in Python in `build_site.py`. So `/lab` and `/compare` can run it on
 *arbitrary pasted text* in the browser without a second, drifting copy, `analysis_rules()`
 serializes the engine's rule tables (anchors, verifier keyword lists, pattern metadata) into
-`app.js` at build time (`window.PROMPTOS_RULES`); a compact JS mirror consumes them. A
-build-time browser check confirms **exact parity**: for all 182 corpus prompts the JS engine
-produces the identical verifier type and pattern set as the Python build.
+`app.js` at build time (`window.PROMPTOS_RULES`); a compact JS mirror consumes them. Note the
+mirror reimplements the *algorithm* in JS — only the rule tables are literally shared — so parity
+is enforced rather than assumed. `tools/check_js.mjs` runs in CI with no browser: it compiles
+every exported rule regex as a JS `RegExp` (catching Python-only constructs that would throw in
+the browser) and asserts that for every corpus prompt the JS engine produces the identical
+verifier type and pattern set as the Python build. Injecting a one-line fork into the JS
+`deriveVerifier` makes it report 124 mismatches, so the check demonstrably bites.

@@ -33,10 +33,27 @@ The library is also a browsable, searchable, teachable **static site** — Home 
 Prompt detail → Anatomy — generated straight from `loops/*.md`. Build with
 `python3 build_site.py`, then serve `site/`. See **[SITE.md](SITE.md)**.
 
+## Build & verify
+
+```bash
+python3 build_site.py          # writes site/ (fails loudly on a corrupt corpus)
+node tools/check_js.mjs        # Python/JS analysis-engine parity across the corpus
+python3 tools/regen_index.py   # regenerate loops/README.md from loops/*.md
+python3 test_build.py          # generator + regression self-checks
+```
+
+The build **fails** rather than warns on an empty prompt body, a missing stop arm, an
+unresolvable starter entry, or a page/sitemap mismatch; it writes to a staging directory
+and swaps only on success, so a failed build cannot damage the published site. Output is
+byte-for-byte deterministic. Set `PROMPT_OS_BASE_URL` to your own origin when deploying a
+fork — it defaults to `http://localhost:8199/` so a fork can never emit canonical URLs
+pointing at someone else's deployment.
+
 ## Provenance
 
 The library and research were generated through multi-agent authoring with adversarial verification
 and then human-reviewed. Regenerate/extend by editing the loop families and re-running the same
 pipeline.
 
-<!-- Counts verified 2026-07-19 from `python3 build_site.py`: 182 prompts across 38 families. -->
+<!-- Counts are generated: loops/README.md is produced by tools/regen_index.py and
+     CI fails if it drifts from loops/*.md. -->

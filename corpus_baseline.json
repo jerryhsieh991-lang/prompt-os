@@ -1,0 +1,6 @@
+{
+  "_comment": "Floor values, not exact expectations. The corpus may only grow; CI fails if it shrinks. Raise these deliberately with: python3 tools/bless_baseline.py",
+  "min_prompts": 182,
+  "min_families": 38,
+  "min_principles": 12
+}

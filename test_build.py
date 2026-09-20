@@ -2,7 +2,11 @@
 """Regression self-checks for the dependency-free site generator."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import shutil
+import subprocess
 import unittest
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -13,9 +17,14 @@ from urllib.parse import urlsplit
 import build_site
 
 
-EXPECTED_PROMPTS = 182
-EXPECTED_FAMILIES = 38
-EXPECTED_HTML_PAGES = 261  # 14 top-level pages + 182 prompt + 38 family + 15 pattern + 12 automation
+# Floors, not exact expectations. Hardcoding the exact counts meant that adding a
+# prompt — the thing this project is built to make easy — turned CI red until three
+# magic numbers were hand-edited. The corpus may grow freely; it may not shrink, and
+# the page count is derived from what the generator actually emits.
+BASELINE = json.loads((Path(__file__).resolve().parent / "corpus_baseline.json").read_text())
+MIN_PROMPTS = BASELINE["min_prompts"]
+MIN_FAMILIES = BASELINE["min_families"]
+MIN_PRINCIPLES = BASELINE["min_principles"]
 ANATOMY_SHORT_ALLOWLIST = {"orchestration-harness-8"}
 
 
@@ -142,15 +151,17 @@ class BuildSiteTests(unittest.TestCase):
             cls.prompts.extend(build_site.parse_family(key))
 
     def test_corpus_parse_invariants(self) -> None:
-        self.assertEqual(EXPECTED_FAMILIES, len(build_site.FAMILIES))
-        self.assertEqual(EXPECTED_PROMPTS, len(self.prompts))
+        self.assertGreaterEqual(len(build_site.FAMILIES), MIN_FAMILIES)
+        self.assertGreaterEqual(len(self.prompts), MIN_PROMPTS)
 
         for key, _title in build_site.FAMILIES:
             parsed = build_site.parse_family(key)
             self.assertGreater(len(parsed), 0, key)
 
-        missing_desc = [key for key, _title in build_site.FAMILIES if not build_site.FAMILY_DESC.get(key)]
-        self.assertEqual([], missing_desc)
+        # A family without a curated description degrades to a generated one; that is
+        # deliberate so auto-discovery ("drop a file, get a family") keeps working.
+        for key, title in build_site.FAMILIES:
+            self.assertTrue(build_site.family_desc(key, title).strip(), key)
 
         for prompt in self.prompts:
             with self.subTest(prompt=prompt["id"]):
@@ -253,7 +264,11 @@ class BuildSiteTests(unittest.TestCase):
 
     def test_generated_output_integrity(self) -> None:
         html_files = sorted(build_site.SITE.rglob("*.html"))
-        self.assertEqual(EXPECTED_HTML_PAGES, len(html_files))
+        # derived, not a literal: one page per prompt + family + pattern + automation,
+        # plus the top-level pages the generator actually wrote.
+        self.assertGreaterEqual(len(html_files),
+                                MIN_PROMPTS + MIN_FAMILIES + len(build_site.PATTERN_META)
+                                + len(build_site.AUTOMATIONS))
 
         unresolved = (
             "{html.escape(", "{json.dumps(", "{prefix}", "{body}", "{extra_head}",
@@ -431,6 +446,203 @@ class BuildSiteTests(unittest.TestCase):
         self.assertIn("User-agent: *", robots)
         self.assertIn("Allow: /", robots)
         self.assertIn(f"Sitemap: {build_site.absolute_url('sitemap.xml')}", robots)
+
+
+class RegressionTests(unittest.TestCase):
+    """One test per defect found in the architecture audit. Each of these fails on
+    the pre-fix tree and passes after. Named for the flaw, not the fix."""
+
+    ROOT = Path(__file__).resolve().parent
+
+    # ---- build integrity -------------------------------------------------
+
+    def _run_build(self):
+        return subprocess.run(["python3", "build_site.py"], cwd=self.ROOT,
+                              capture_output=True, text=True)
+
+    def test_build_fails_loudly_on_corrupt_corpus(self) -> None:
+        """A prompt with an empty body used to print a WARNING and exit 0, publishing
+        a page with an empty <pre> and a broken record in prompts.json."""
+        target = self.ROOT / "loops" / "build-verify.md"
+        original = target.read_text(encoding="utf-8")
+        try:
+            target.write_text(re.sub(r"(```text\n).*?(\n```)", r"\1\2", original,
+                                     count=1, flags=re.S), encoding="utf-8")
+            result = self._run_build()
+            self.assertNotEqual(0, result.returncode,
+                                "build exited 0 on a corpus with an empty prompt body")
+            self.assertIn("empty prompt_text", result.stdout + result.stderr)
+        finally:
+            target.write_text(original, encoding="utf-8")
+            self.assertEqual(0, self._run_build().returncode)
+
+    def test_failed_build_leaves_live_site_intact(self) -> None:
+        """The generator used to rmtree() the live output before writing, so a failure
+        mid-build left a partial site indistinguishable from a complete one."""
+        self.assertEqual(0, self._run_build().returncode)
+        before = sorted(q.relative_to(build_site.SITE).as_posix()
+                        for q in build_site.SITE.rglob("*") if q.is_file())
+        target = self.ROOT / "loops" / "build-verify.md"
+        original = target.read_text(encoding="utf-8")
+        try:
+            target.write_text(re.sub(r"(```text\n).*?(\n```)", r"\1\2", original,
+                                     count=1, flags=re.S), encoding="utf-8")
+            self.assertNotEqual(0, self._run_build().returncode)
+            after = sorted(q.relative_to(build_site.SITE).as_posix()
+                           for q in build_site.SITE.rglob("*") if q.is_file())
+            self.assertEqual(before, after, "failed build damaged the live site")
+            self.assertFalse((self.ROOT / "site.staging").exists(), "staging dir leaked")
+        finally:
+            target.write_text(original, encoding="utf-8")
+            self.assertEqual(0, self._run_build().returncode)
+
+    def test_new_family_file_still_builds(self) -> None:
+        """Auto-discovery is the project's stated robustness property: dropping a
+        well-formed family file must not require a code edit or fail the build."""
+        probe = self.ROOT / "loops" / "zz-regression-probe.md"
+        probe.write_text(
+            "# Probe Family\n\n`zz-regression-probe` — 1 loop prompt.\n\n"
+            "### 1. Probe Loop\n\n"
+            "- **When:** Auto-discovery regression probe.\n"
+            "- **Loop:** assess -> one action -> verify -> decide\n"
+            "- **Stop:** SUCCESS: green · BUDGET: 1 turn · NO-PROGRESS: flat · BLOCKED: n/a\n"
+            "- **Model:** Mechanical — a cheaper model is fine.\n\n"
+            "```text\nGoal (frozen): confirm the probe builds, verified by the test suite.\n\n"
+            "Each turn: assess -> ONE change -> run the test suite as your verifier -> commit or revert.\n\n"
+            "Carry forward: what was tried, iterations left of <MAX_ITERATIONS>.\n\n"
+            "Stop on the first of: SUCCESS; BUDGET; NO-PROGRESS; BLOCKED.\n```\n",
+            encoding="utf-8")
+        try:
+            result = self._run_build()
+            self.assertEqual(0, result.returncode,
+                             f"dropping a family file broke the build:\n{result.stdout}{result.stderr}")
+        finally:
+            probe.unlink()
+            self.assertEqual(0, self._run_build().returncode)
+
+    def test_build_is_deterministic(self) -> None:
+        """Curation edges were sets; iterating them leaked PYTHONHASHSEED randomisation
+        into graph.html and prompt pages, so identical input produced different output."""
+        def digest():
+            self.assertEqual(0, self._run_build().returncode)
+            h = hashlib.sha256()
+            for q in sorted(build_site.SITE.rglob("*")):
+                if q.is_file():
+                    h.update(q.relative_to(build_site.SITE).as_posix().encode())
+                    h.update(q.read_bytes())
+            return h.hexdigest()
+        self.assertEqual(digest(), digest(), "two builds of identical input differ")
+
+    # ---- corpus / index --------------------------------------------------
+
+    def test_all_principles_reach_the_site(self) -> None:
+        """A hardcoded [:11] slice silently dropped principle #12 from every page."""
+        source = (build_site.LOOPS / "00-loop-engineering-principles.md").read_text(encoding="utf-8")
+        section = source.split("## Principles", 1)[1].split("## Antipatterns", 1)[0]
+        in_source = len(re.findall(r"^-\s+\*\*(.+?)\*\*\s*—", section, re.M))
+        parsed = build_site.parse_principles()["principles"]
+        self.assertEqual(in_source, len(parsed))
+        self.assertGreaterEqual(len(parsed), MIN_PRINCIPLES)
+        rendered = (build_site.SITE / "anatomy.html").read_text(encoding="utf-8")
+        for principle in parsed:
+            self.assertIn(build_site.html.escape(principle["name"]), rendered)
+
+    def test_curation_notes_name_only_real_families(self) -> None:
+        """Renamed families left dead cross-references on 76 published pages."""
+        index = (build_site.LOOPS / "README.md").read_text(encoding="utf-8")
+        keys = {key for key, _title in build_site.FAMILIES}
+        dead = []
+        for line in index.splitlines():
+            if "≈" not in line:
+                continue
+            for token in re.findall(r"^-\s*([^\s']+)|·\s*([^\s']+)\s*'", line):
+                name = (token[0] or token[1] or "").strip()
+                if name and re.search(r"[^\x00-\x7f]", name):
+                    dead.append(name)
+        self.assertEqual([], dead, "curation notes reference a family that does not exist")
+
+    def test_loops_index_is_in_sync_with_corpus(self) -> None:
+        """loops/README.md is a BUILD INPUT; it had drifted 24 prompts out of date."""
+        result = subprocess.run(["python3", "tools/regen_index.py", "--check"],
+                                cwd=self.ROOT, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_every_starter_entry_resolves_to_a_prompt(self) -> None:
+        """Unmatched starter titles used to vanish silently, shrinking the set."""
+        titles = [t.lower() for t in build_site.parse_starter_titles()]
+        self.assertTrue(titles)
+        prompts = [p for key, _ in build_site.FAMILIES for p in build_site.parse_family(key)]
+        unresolved = [t for t in titles
+                      if not any(t == p["title"].lower() or t in p["title"].lower() for p in prompts)]
+        self.assertEqual([], unresolved)
+
+    def test_no_authoring_residue_in_published_corpus(self) -> None:
+        """The old denylist of four strings missed a leaked standing-instruction note."""
+        residue = re.compile(
+            r"user standing instruction|\(subagent\)|Task: author|scenario =|"
+            r"in the library's style|as an AI language model|I cannot comply",
+            re.I)
+        leaks = []
+        for path in sorted(build_site.LOOPS.glob("*.md")):
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if residue.search(line):
+                    leaks.append(f"{path.name}:{n}")
+        self.assertEqual([], leaks)
+
+    # ---- client bundle ---------------------------------------------------
+
+    def test_bundle_has_one_escaper_matching_python(self) -> None:
+        """Four divergent copies existed; none escaped the apostrophe that
+        html.escape() does, so an attribute-context sink could not be made safe."""
+        js = (build_site.SITE / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertEqual(0, len(re.findall(r"function esc(?:apeHtml)?\s*\(", js)),
+                         "a local escaper definition is back; use the shared pesc()")
+        self.assertIn("function pesc", js)
+        body = js.split("function pesc", 1)[1][:400]
+        for entity in ("&amp;", "&lt;", "&gt;", "&quot;", "&#x27;"):
+            self.assertIn(entity, body,
+                          f"pesc() must emit {entity} to match html.escape(quote=True)")
+
+    def test_analysis_engine_is_guarded(self) -> None:
+        """A Python-only regex in the shared rules used to throw at module scope,
+        aborting app.js on all 261 pages rather than just disabling /lab."""
+        js = (build_site.SITE / "assets" / "app.js").read_text(encoding="utf-8")
+        engine = js[js.index("var PROMPTOS = (function () {"):]
+        engine = engine[:engine.index("\n})();")]
+        self.assertIn("try {", engine)
+        self.assertIn("catch (e)", engine)
+
+    def test_python_js_parity(self) -> None:
+        """SITE.md claimed a build-time parity check existed. None did."""
+        if shutil.which("node") is None:
+            self.skipTest("node not available")
+        result = subprocess.run(["node", "tools/check_js.mjs"],
+                                cwd=self.ROOT, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    # ---- deployment config ----------------------------------------------
+
+    def test_non_english_content_is_language_tagged(self) -> None:
+        """Two families carry Chinese titles and 'when' text while every page declares
+        lang="en", so assistive tech applied English phonetics to Mandarin."""
+        untagged = []
+        for path in sorted(build_site.SITE.rglob("*.html")):
+            text = path.read_text(encoding="utf-8")
+            for match in re.finditer(r"<(\w+)([^>]*)>([^<]*)</\1>", text):
+                tag, attrs, inner = match.group(1), match.group(2), match.group(3)
+                if tag in ("script", "style"):
+                    continue  # not rendered prose; a lang attribute is meaningless here
+                if build_site.CJK_RE.search(inner) and "lang=" not in attrs:
+                    untagged.append(f"{path.name}: {inner[:30]}")
+        self.assertEqual([], untagged[:5],
+                         "CJK text rendered inside an element with no lang attribute")
+
+    def test_base_url_is_configurable(self) -> None:
+        """A hardcoded origin meant every fork published canonical/OG/sitemap URLs
+        pointing at the original author's deployment."""
+        source = (self.ROOT / "build_site.py").read_text(encoding="utf-8")
+        self.assertIn('os.environ.get("PROMPT_OS_BASE_URL"', source)
+        self.assertNotIn('BASE_URL = "https://', source)
 
 
 if __name__ == "__main__":

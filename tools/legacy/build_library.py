@@ -7,9 +7,33 @@ Category order matches the workflow's pipeline order, so we relabel by index.
 """
 import json, pathlib, sys
 
-ROOT = pathlib.Path(__file__).resolve().parent
-OUT = sys.argv[1] if len(sys.argv) > 1 else \
-    "/private/tmp/claude-501/-Users-jerryjerry-Projects-tokenizer-training/473865b5-824f-4417-9f21-3d675e157632/tasks/wvqgb2412.output"
+# ---------------------------------------------------------------------------
+# LEGACY — DO NOT RUN CASUALLY.
+#
+# This materialised the original 14-family corpus from a one-off authoring
+# workflow's JSON output. It is kept for provenance only. Two hazards:
+#   1. It used to default to a hardcoded scratch path on one machine that no
+#      longer exists, so it could only ever raise FileNotFoundError.
+#   2. KEYS below is frozen at the original 14 families. Running it against any
+#      current workflow output either trips the length assert or OVERWRITES
+#      loops/*.md and loops/README.md, collapsing a 38-family corpus to 14.
+#
+# To regenerate the index from the corpus (the only part still needed), use:
+#     python3 tools/regen_index.py
+# ---------------------------------------------------------------------------
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+if "--i-understand-this-overwrites-the-corpus" not in sys.argv:
+    raise SystemExit(
+        "refusing to run: this legacy script overwrites loops/*.md with a frozen\n"
+        "14-family layout and will destroy the current corpus.\n"
+        "To regenerate the loop index instead, run: python3 tools/regen_index.py"
+    )
+
+_args = [a for a in sys.argv[1:] if not a.startswith("--")]
+if not _args:
+    raise SystemExit("usage: build_library.py <workflow-output.json> --i-understand-this-overwrites-the-corpus")
+OUT = _args[0]
 
 data = json.load(open(OUT))
 r = data.get("result", data)
